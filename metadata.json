@@ -1,0 +1,7 @@
+{
+  "name": "NexusMarket - Advanced Micro-Frontend E-commerce",
+  "description": "A sophisticated e-commerce platform featuring a microservice-inspired architecture, integrated Gemini AI assistant, and comprehensive seller/buyer dashboards.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
