@@ -1,6 +1,6 @@
 
-import { Product, Order, CartItem, User } from '../types';
-import { INITIAL_PRODUCTS } from '../constants';
+import { Product, Order, CartItem, User } from './types';
+import { INITIAL_PRODUCTS } from './constants';
 
 // Simulated DB logic using localStorage
 const STORAGE_KEYS = {

@@ -20,8 +20,8 @@ import {
 
 import { Product, Category, User, CartItem, Order, ChatMessage } from './types';
 import { INITIAL_PRODUCTS, CATEGORIES } from './constants';
-import { ProductService, OrderService } from './services/apiService';
-import { getShoppingAdvice, generateProductDescription } from './services/geminiService';
+import { ProductService, OrderService } from './apiService';
+import { getShoppingAdvice, generateProductDescription } from './geminiService';
 
 // --- Components ---
 
