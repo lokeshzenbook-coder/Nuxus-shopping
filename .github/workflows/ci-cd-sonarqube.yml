@@ -91,8 +91,3 @@ jobs:
           path: .scannerwork || {
             echo "No scanner artifacts present"
           }
-
-# Notes:
-# - Set 'SONAR_TOKEN' in repository secrets for authentication.
-# - For SonarCloud, additionally set SONAR_ORGANIZATION and SONAR_PROJECT_KEY in SonarCloud UI or as secrets.
-# - For self-hosted SonarQube, set 'SONAR_HOST_URL' and 'SONAR_TOKEN' as repository secrets and ensure 'sonar-project.properties' exists in repo.
