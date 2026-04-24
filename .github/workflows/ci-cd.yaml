@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: your-dockerhub-lokeshzenbook/node-app
+  IMAGE_NAME: lokeshzenbook/node-app
 
 jobs:
   ci-cd:
