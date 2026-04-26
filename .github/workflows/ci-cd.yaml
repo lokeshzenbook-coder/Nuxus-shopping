@@ -44,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      # ---------- Trivy Filesystem Scan ----------
+      # ---------- Trivy Scan ----------
       - name: Run Trivy FS Scan
         run: trivy fs . > trivy-report.txt
 
@@ -85,8 +85,14 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ---------- Tag & Push to ECR ----------
-      - name: Build, Tag, and Push to ECR
+      # ✅ ---------- Create ECR Repo if Not Exists ----------
+      - name: Create ECR Repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names node-app \
+          || aws ecr create-repository --repository-name node-app
+
+      # ---------- Push to ECR ----------
+      - name: Tag and Push to ECR
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
           
