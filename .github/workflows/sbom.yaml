@@ -1,0 +1,192 @@
+name: Node.js CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  IMAGE_NAME: lokeshzenbook/node-app
+
+jobs:
+  ci-cd:
+    runs-on: ubuntu-latest
+
+    steps:
+      # =========================
+      # CHECKOUT & SETUP
+      # =========================
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # =========================
+      # BUILD & TEST
+      # =========================
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      # =========================
+      # SAST - SEMGREP
+      # =========================
+      - name: Run Semgrep (SAST)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: "p/ci"
+        continue-on-error: true
+
+      # =========================
+      # INSTALL SECURITY TOOLS
+      # =========================
+      - name: Install Trivy & Syft
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release curl
+
+          # Trivy
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+          # Syft
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh
+
+      # =========================
+      # SCA + FS SCAN
+      # =========================
+      - name: Trivy Filesystem Scan (SCA)
+        run: trivy fs . --format table -o trivy-fs-report.txt
+
+      # =========================
+      # IaC SCAN
+      # =========================
+      - name: Trivy IaC Scan
+        run: trivy config . --format table -o trivy-iac-report.txt
+
+      # =========================
+      # SBOM GENERATION
+      # =========================
+      - name: Generate SBOM (CycloneDX)
+        run: syft dir:. -o cyclonedx-json > sbom.json
+
+      - name: Generate SBOM (SPDX)
+        run: syft dir:. -o spdx-json > sbom-spdx.json
+
+      # =========================
+      # UPLOAD SECURITY REPORTS
+      # =========================
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            trivy-fs-report.txt
+            trivy-iac-report.txt
+            sbom.json
+            sbom-spdx.json
+
+      # =========================
+      # DOCKER BUILD & PUSH
+      # =========================
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+          docker build -t $IMAGE_NAME:latest .
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Docker Image Scan (Trivy)
+        run: |
+          trivy image $IMAGE_NAME:latest --format table -o trivy-image-report.txt
+
+      - name: Push Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
+
+      # =========================
+      # AWS + ECR
+      # =========================
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR Repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names node-app \
+          || aws ecr create-repository --repository-name node-app
+
+      - name: Push to ECR
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+          ECR=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+
+          docker tag $IMAGE_NAME:latest $ECR/node-app:latest
+          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR/node-app:$IMAGE_TAG
+
+          docker push $ECR/node-app:latest
+          docker push $ECR/node-app:$IMAGE_TAG
+
+      # =========================
+      # DAST - OWASP ZAP
+      # =========================
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: "http://example.com"   # 🔥 replace with your app URL
+        continue-on-error: true
+
+      # =========================
+      # NOTIFICATION
+      # =========================
+      - name: Send Email Notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "DevSecOps Pipeline Status 🚀"
+          body: |
+            Status: ${{ job.status }}
+
+            ✔ SAST (Semgrep)
+            ✔ SCA (Trivy FS)
+            ✔ IaC Scan
+            ✔ SBOM Generated
+            ✔ Docker Scan
+            ✔ DAST (ZAP)
+
+            Repo: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+          to: your-email@gmail.com
+          from: GitHub Actions
+          attachments: |
+            trivy-fs-report.txt
+            trivy-iac-report.txt
+            trivy-image-report.txt
