@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app
+  IMAGE_NAME: lokeshzenbook/node-app3
 
 jobs:
   ci-cd:
@@ -137,8 +137,8 @@ jobs:
 
       - name: Create ECR Repository if not exists
         run: |
-          aws ecr describe-repositories --repository-names node-app \
-          || aws ecr create-repository --repository-name node-app
+          aws ecr describe-repositories --repository-names node-app3 \
+          || aws ecr create-repository --repository-name node-app3
 
       - name: Push to ECR
         run: |
@@ -157,7 +157,10 @@ jobs:
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: "http://example.com"   # 🔥 replace with your app URL
+          target: "http://example.com"   # replace with your app URL
+          format: html
+          report_name: zap-report.html
+          cmd_options: "-J zap-report.json"
         continue-on-error: true
 
       # =========================
@@ -187,6 +190,9 @@ jobs:
           to: your-email@gmail.com
           from: GitHub Actions
           attachments: |
+            sbom.json
+            sbom-spdx.json
+            zap-report.html
             trivy-fs-report.txt
             trivy-iac-report.txt
             trivy-image-report.txt
