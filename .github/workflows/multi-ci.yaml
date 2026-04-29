@@ -1,0 +1,189 @@
+name: Node.js CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  IMAGE_NAME: lokeshzenbook/node-app
+
+jobs:
+
+  # =========================
+  # 1. BUILD & TEST STAGE
+  # =========================
+  build-test:
+    name: Build & Test Stage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: |
+            dist/
+            node_modules/
+
+  # =========================
+  # 2. SECURITY STAGE
+  # =========================
+  security-scan:
+    name: Security Scan Stage (Trivy)
+    runs-on: ubuntu-latest
+    needs: build-test
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Run Trivy FS Scan
+        run: trivy fs . > trivy-report.txt
+
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+
+  # =========================
+  # 3. DOCKER BUILD & PUSH
+  # =========================
+  docker:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: security-scan
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: app-build
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build & Push Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          docker build -t $IMAGE_NAME:latest .
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
+
+  # =========================
+  # 4. ECR DEPLOYMENT STAGE
+  # =========================
+  ecr-deploy:
+    name: Push to AWS ECR
+    runs-on: ubuntu-latest
+    needs: docker
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR Repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names node-app \
+          || aws ecr create-repository --repository-name node-app
+
+      - name: Tag & Push to ECR
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ECR_REPOSITORY=node-app
+
+          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+  # =========================
+  # 5. NOTIFICATION STAGE
+  # =========================
+  notify:
+    name: Notification Stage
+    runs-on: ubuntu-latest
+    needs: [build-test, security-scan, docker, ecr-deploy]
+    if: always()
+
+    steps:
+      - name: Download Trivy Report
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-report
+
+      - name: Send Email Notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI/CD Pipeline Status 🚀"
+          body: |
+            Pipeline Status: ${{ job.status }}
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+
+            Docker Images:
+            - $IMAGE_NAME:latest
+            - $IMAGE_NAME:${{ github.sha }}
+
+            ECR Images:
+            - ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/node-app:latest
+
+            Trivy scan completed. Check attached report.
+          to: your-email@gmail.com
+          from: GitHub Actions
+          attachments: trivy-report.txt
