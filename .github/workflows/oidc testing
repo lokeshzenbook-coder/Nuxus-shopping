@@ -81,12 +81,14 @@ jobs:
           docker push $IMAGE_NAME:$IMAGE_TAG
 
       # 🔐 ---------- Configure AWS Credentials (OIDC) ----------
+      - name: Export AWS Region
+        run: echo "AWS_REGION=ap-south-1" >> $GITHUB_ENV
+
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
-          aws-region: ap-south-1
-          role-session-name: github-actions-session
+          aws-region: ${{ env.AWS_REGION }}
 
       # 🔍 ---------- Debug Identity (CRITICAL) ----------
       - name: Verify AWS Identity
