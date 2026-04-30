@@ -73,37 +73,37 @@ jobs:
           docker push $IMAGE_NAME:latest
           docker push $IMAGE_NAME:$IMAGE_TAG
 
-      # ---------- Configure AWS Credentials ----------
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+      # # ---------- Configure AWS Credentials ----------
+      # - name: Configure AWS Credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: ${{ secrets.AWS_REGION }}
 
-      # ---------- Login to Amazon ECR ----------
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      # # ---------- Login to Amazon ECR ----------
+      # - name: Login to Amazon ECR
+      #   uses: aws-actions/amazon-ecr-login@v2
 
-      # ✅ ---------- Create ECR Repo if Not Exists ----------
-      - name: Create ECR Repository if not exists
-        run: |
-          aws ecr describe-repositories --repository-names node-app \
-          || aws ecr create-repository --repository-name node-app
+      # # ✅ ---------- Create ECR Repo if Not Exists ----------
+      # - name: Create ECR Repository if not exists
+      #   run: |
+      #     aws ecr describe-repositories --repository-names node-app \
+      #     || aws ecr create-repository --repository-name node-app
 
-      # ---------- Push to ECR ----------
-      - name: Tag and Push to ECR
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+      # # ---------- Push to ECR ----------
+      # - name: Tag and Push to ECR
+      #   run: |
+      #     IMAGE_TAG=${GITHUB_SHA::7}
           
-          ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          ECR_REPOSITORY=node-app
+          # ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          # ECR_REPOSITORY=node-app
 
-          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          # docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          # docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          # docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          # docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
       # ---------- Email Notification ----------
       - name: Send Email Notification
