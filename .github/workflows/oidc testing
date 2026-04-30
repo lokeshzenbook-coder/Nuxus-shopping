@@ -85,7 +85,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ap-south-1
           role-session-name: github-actions-session
 
       # 🔍 ---------- Debug Identity (CRITICAL) ----------
