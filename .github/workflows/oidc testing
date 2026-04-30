@@ -1,26 +1,139 @@
-name: OIDC AWS Example
+name: Node.js CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  IMAGE_NAME: lokeshzenbook/node-app
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: node-app
 
 permissions:
   id-token: write   # 🔥 REQUIRED for OIDC
   contents: read
 
 jobs:
-  deploy:
+  ci-cd:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # ---------- Checkout ----------
+      - name: Checkout source
         uses: actions/checkout@v4
 
+      # ---------- Node Setup ----------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # ---------- Build & Test ----------
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      # ---------- Install Trivy ----------
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      # ---------- Trivy Scan ----------
+      - name: Run Trivy FS Scan
+        run: trivy fs . > trivy-report.txt
+
+      # ---------- Upload Report ----------
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+
+      # ---------- Docker Hub Login ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # ---------- Build & Push to Docker Hub ----------
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          docker build -t $IMAGE_NAME:latest .
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
+
+      # 🔐 ---------- Configure AWS Credentials (OIDC) ----------
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>
-          aws-region: ap-south-1
+          role-to-assume: ${{secrets.AWS_IAM_ROLE}}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Verify identity
-        run: aws sts get-caller-identity
+      # ---------- Login to Amazon ECR ----------
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ---------- Create ECR Repo if Not Exists ----------
+      - name: Create ECR Repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names $ECR_REPOSITORY \
+          || aws ecr create-repository --repository-name $ECR_REPOSITORY
+
+      # ---------- Push to ECR ----------
+      - name: Tag and Push to ECR
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # ---------- Email Notification ----------
+      - name: Send Email Notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI/CD Pipeline Status 🚀"
+          body: |
+            Pipeline Status: ${{ job.status }}
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+
+            Docker Images:
+            - $IMAGE_NAME:latest
+            - $IMAGE_NAME:${{ github.sha }}
+
+            ECR Images:
+            - Pushed using OIDC (no AWS secrets)
+
+            Trivy scan completed. Check attached report.
+          to: your-email@gmail.com
+          from: GitHub Actions
+          attachments: trivy-report.txt
