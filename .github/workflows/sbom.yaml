@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app3
+  IMAGE_NAME: lokeshzenbook/node-app4
 
 jobs:
   ci-cd:
@@ -82,8 +82,8 @@ jobs:
         uses: anchore/sbom-action@v0
         with:
           path: .
-          format: cyclonedx-json
-          output-file: sbom.json
+          format: cyclonedx-html
+          output-file: sbom.html
 
       # =========================
       # UPLOAD SECURITY REPORTS
@@ -123,34 +123,34 @@ jobs:
           docker push $IMAGE_NAME:latest
           docker push $IMAGE_NAME:$IMAGE_TAG
 
-      # =========================
-      # AWS + ECR
-      # =========================
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+      # # =========================
+      # # AWS + ECR
+      # # =========================
+      # - name: Configure AWS Credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      # - name: Login to Amazon ECR
+      #   uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Create ECR Repository if not exists
-        run: |
-          aws ecr describe-repositories --repository-names node-app3 \
-          || aws ecr create-repository --repository-name node-app3
+      # - name: Create ECR Repository if not exists
+      #   run: |
+      #     aws ecr describe-repositories --repository-names node-app3 \
+      #     || aws ecr create-repository --repository-name node-app3
 
-      - name: Push to ECR
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-          ECR=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+      # - name: Push to ECR
+      #   run: |
+      #     IMAGE_TAG=${GITHUB_SHA::7}
+      #     ECR=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
-          docker tag $IMAGE_NAME:latest $ECR/node-app:latest
-          docker tag $IMAGE_NAME:$IMAGE_TAG $ECR/node-app:$IMAGE_TAG
+      #     docker tag $IMAGE_NAME:latest $ECR/node-app:latest
+      #     docker tag $IMAGE_NAME:$IMAGE_TAG $ECR/node-app:$IMAGE_TAG
 
-          docker push $ECR/node-app:latest
-          docker push $ECR/node-app:$IMAGE_TAG
+      #     docker push $ECR/node-app:latest
+      #     docker push $ECR/node-app:$IMAGE_TAG
 
       # =========================
       # DAST - OWASP ZAP
@@ -191,8 +191,8 @@ jobs:
           to: your-email@gmail.com
           from: GitHub Actions
           attachments: |
-            sbom.json
-            sbom-spdx.json
+            sbom.html
+            sbom-spdx.html
             zap-report.html
             trivy-fs-report.txt
             trivy-iac-report.txt
