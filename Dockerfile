@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-COPY . .
+COPY . 
 
 # Build your app (e.g. TypeScript → dist)
 RUN npm run build
