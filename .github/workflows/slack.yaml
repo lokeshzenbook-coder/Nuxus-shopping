@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app
+  IMAGE_NAME: lokeshzenbook/node-app4
 
 jobs:
   ci-cd:
@@ -46,7 +46,14 @@ jobs:
 
       # ---------- Trivy Scan ----------
       - name: Run Trivy FS Scan
-        run: trivy fs . > trivy-report.txt
+        run: |
+          trivy fs --severity HIGH,CRITICAL --no-progress . > trivy-report.txt
+          
+          CRITICAL=$(grep -i CRITICAL trivy-report.txt | wc -l)
+          HIGH=$(grep -i HIGH trivy-report.txt | wc -l)
+
+          echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
+          echo "HIGH=$HIGH" >> $GITHUB_ENV
 
       # ---------- Upload Report ----------
       - name: Upload Trivy Report
@@ -62,14 +69,16 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # ---------- Build & Push ----------
+      # ---------- Build & Push Docker Image ----------
       - name: Build and Push Docker Image
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
-          
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
           docker build -t $IMAGE_NAME:latest .
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          
+
           docker push $IMAGE_NAME:latest
           docker push $IMAGE_NAME:$IMAGE_TAG
 
@@ -91,36 +100,77 @@ jobs:
 
             Docker Images:
             - $IMAGE_NAME:latest
-            - $IMAGE_NAME:${{ github.sha }}
+            - $IMAGE_NAME:${{ env.IMAGE_TAG }}
 
-            Trivy scan completed.
+            Trivy Summary:
+            - Critical: ${{ env.CRITICAL }}
+            - High: ${{ env.HIGH }}
+
+            Run URL:
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
           to: your-email@gmail.com
           from: GitHub Actions
           attachments: trivy-report.txt
 
       # ---------- Slack Notification ----------
-      - name: Slack Notification
+      - name: Send Slack Notification
         if: always()
         run: |
-          STATUS="${{ job.status }}"
-          COLOR="good"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          if [ "$STATUS" != "success" ]; then
-            COLOR="danger"
-          fi
+          STATUS="${{ job.status }}"
+          COLOR="#36a64f"
+          if [ "$STATUS" != "success" ]; then COLOR="#ff0000"; fi
 
           curl -X POST -H 'Content-type: application/json' \
           --data "{
             \"attachments\": [
               {
                 \"color\": \"$COLOR\",
-                \"title\": \"GitHub Actions CI/CD Pipeline\",
-                \"fields\": [
-                  {\"title\": \"Status\", \"value\": \"$STATUS\", \"short\": true},
-                  {\"title\": \"Repo\", \"value\": \"${{ github.repository }}\", \"short\": true},
-                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true}
-                ],
-                \"footer\": \"GitHub Actions\"
+                \"blocks\": [
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🚀 CI/CD Pipeline Status: $STATUS*\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Repo:*\\n${{ github.repository }}\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Branch:*\\n${{ github.ref_name }}\"
+                      }
+                    ]
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🐳 Docker Images:*\\n• $IMAGE_NAME:latest\\n• $IMAGE_NAME:${{ env.IMAGE_TAG }}\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🔐 Trivy Scan Summary:*\\n• Critical: ${{ env.CRITICAL }}\\n• High: ${{ env.HIGH }}\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🔗 <${RUN_URL}|View GitHub Run>*\"
+                    }
+                  }
+                ]
               }
             ]
           }" \
