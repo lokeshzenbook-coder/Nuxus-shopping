@@ -1,172 +1,122 @@
-name: Node.js CI/CD Pipeline
+name: Node.js DevSecOps Pipeline
 
 on:
   push:
     branches: ["main"]
+
   pull_request:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app4
+  IMAGE_NAME: lokeshzenbook/node-app2
 
 jobs:
-  ci-cd:
+
+  # =========================================================
+  # Secrets Scan Stage
+  # =========================================================
+  secrets-scan:
+    name: Secrets - Gitleaks Scan
     runs-on: ubuntu-latest
 
     steps:
-      # =========================
-      # CHECKOUT & SETUP
-      # =========================
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks secrets scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================
+  # Main CI/CD Pipeline
+  # =========================================================
+  ci-cd:
+    name: Build Test Scan Push
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+
+    steps:
+
+      # ---------- Checkout ----------
       - name: Checkout source
         uses: actions/checkout@v4
 
+      # ---------- Node Setup ----------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      # =========================
-      # BUILD & TEST
-      # =========================
+      # ---------- Install Dependencies ----------
       - name: Install dependencies
         run: npm install
 
+      # ---------- Run Tests ----------
       - name: Run tests
         run: npm test
 
+      # ---------- Build Application ----------
       - name: Build application
         run: npm run build
 
-      # =========================
-      # SAST - SEMGREP
-      # =========================
-      - name: Run Semgrep (SAST)
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: "p/ci"
-        continue-on-error: true
-
-      # =========================
-      # INSTALL SECURITY TOOLS
-      # =========================
-      - name: Install Trivy & Syft
+      # ---------- Install Trivy ----------
+      - name: Install Trivy
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget apt-transport-https gnupg lsb-release curl
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
 
-          # Trivy
           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
+          sudo tee -a /etc/apt/sources.list.d/trivy.list
+
           sudo apt-get update
           sudo apt-get install -y trivy
 
-          # Syft
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh
+      # ---------- Trivy Filesystem Scan ----------
+      - name: Run Trivy FS Scan
+        run: |
+          trivy fs \
+          --severity HIGH,CRITICAL \
+          --no-progress . > trivy-report.txt
 
-      # =========================
-      # SCA + FS SCAN
-      # =========================
-      - name: Trivy Filesystem Scan (SCA)
-        run: trivy fs . --format table -o trivy-fs-report.txt
+          CRITICAL=$(grep -i CRITICAL trivy-report.txt | wc -l)
+          HIGH=$(grep -i HIGH trivy-report.txt | wc -l)
 
-      # =========================
-      # IaC SCAN
-      # =========================
-      - name: Trivy IaC Scan
-        run: trivy config . --format table -o trivy-iac-report.txt
+          echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
+          echo "HIGH=$HIGH" >> $GITHUB_ENV
 
-      # =========================
-      # SBOM GENERATION
-      # =========================
-      - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
-        with:
-          path: .
-          format: cyclonedx-html
-          output-file: sbom.html
-
-      # =========================
-      # UPLOAD SECURITY REPORTS
-      # =========================
-      - name: Upload Security Reports
+      # ---------- Upload Trivy Report ----------
+      - name: Upload Trivy Report
         uses: actions/upload-artifact@v4
         with:
-          name: security-reports
-          path: |
-            trivy-fs-report.txt
-            trivy-iac-report.txt
-            sbom.json
-            sbom-spdx.json
+          name: trivy-report
+          path: trivy-report.txt
 
-      # =========================
-      # DOCKER BUILD & PUSH
-      # =========================
+      # ---------- Docker Hub Login ----------
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Docker Image
+      # ---------- Build & Push Docker Image ----------
+      - name: Build and Push Docker Image
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
           docker build -t $IMAGE_NAME:latest .
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
-      - name: Docker Image Scan (Trivy)
-        run: |
-          trivy image $IMAGE_NAME:latest --format table -o trivy-image-report.txt
-
-      - name: Push Docker Image
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
           docker push $IMAGE_NAME:latest
           docker push $IMAGE_NAME:$IMAGE_TAG
 
-      # # =========================
-      # # AWS + ECR
-      # # =========================
-      # - name: Configure AWS Credentials
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #     aws-region: ${{ secrets.AWS_REGION }}
-
-      # - name: Login to Amazon ECR
-      #   uses: aws-actions/amazon-ecr-login@v2
-
-      # - name: Create ECR Repository if not exists
-      #   run: |
-      #     aws ecr describe-repositories --repository-names node-app3 \
-      #     || aws ecr create-repository --repository-name node-app3
-
-      # - name: Push to ECR
-      #   run: |
-      #     IMAGE_TAG=${GITHUB_SHA::7}
-      #     ECR=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-
-      #     docker tag $IMAGE_NAME:latest $ECR/node-app:latest
-      #     docker tag $IMAGE_NAME:$IMAGE_TAG $ECR/node-app:$IMAGE_TAG
-
-      #     docker push $ECR/node-app:latest
-      #     docker push $ECR/node-app:$IMAGE_TAG
-
-      # =========================
-      # DAST - OWASP ZAP
-      # =========================
-      - name: Run OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.10.0
-        with:
-          target: "http://example.com"   # replace with your app URL
-          format: html
-          report_name: zap-report.html
-          cmd_options: "-J zap-report.json"
-        continue-on-error: true
-
-      # =========================
-      # NOTIFICATION
-      # =========================
+      # ---------- Email Notification ----------
       - name: Send Email Notification
         if: always()
         uses: dawidd6/action-send-mail@v3
@@ -175,25 +125,92 @@ jobs:
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "DevSecOps Pipeline Status 🚀"
+
+          subject: "CI/CD Pipeline Status 🚀"
+
           body: |
-            Status: ${{ job.status }}
+            Pipeline Status: ${{ job.status }}
 
-            ✔ SAST (Semgrep)
-            ✔ SCA (Trivy FS)
-            ✔ IaC Scan
-            ✔ SBOM Generated
-            ✔ Docker Scan
-            ✔ DAST (ZAP)
-
-            Repo: ${{ github.repository }}
+            Repository: ${{ github.repository }}
             Branch: ${{ github.ref_name }}
+
+            Docker Images:
+            - $IMAGE_NAME:latest
+            - $IMAGE_NAME:${{ env.IMAGE_TAG }}
+
+            Trivy Summary:
+            - Critical: ${{ env.CRITICAL }}
+            - High: ${{ env.HIGH }}
+
+            Run URL:
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
           to: your-email@gmail.com
           from: GitHub Actions
-          attachments: |
-            sbom.html
-            sbom-spdx.html
-            zap-report.html
-            trivy-fs-report.txt
-            trivy-iac-report.txt
-            trivy-image-report.txt
+          attachments: trivy-report.txt
+
+      # ---------- Slack Notification ----------
+      - name: Send Slack Notification
+        if: always()
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          STATUS="${{ job.status }}"
+          COLOR="#36a64f"
+
+          if [ "$STATUS" != "success" ]; then
+            COLOR="#ff0000"
+          fi
+
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{
+            \"attachments\": [
+              {
+                \"color\": \"$COLOR\",
+                \"blocks\": [
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🚀 CI/CD Pipeline Status: $STATUS*\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Repo:*\\n${{ github.repository }}\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Branch:*\\n${{ github.ref_name }}\"
+                      }
+                    ]
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🐳 Docker Images:*\\n• $IMAGE_NAME:latest\\n• $IMAGE_NAME:${{ env.IMAGE_TAG }}\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🔐 Trivy Scan Summary:*\\n• Critical: ${{ env.CRITICAL }}\\n• High: ${{ env.HIGH }}\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🔗 <${RUN_URL}|View GitHub Run>*\"
+                    }
+                  }
+                ]
+              }
+            ]
+          }" \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
