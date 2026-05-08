@@ -1,0 +1,320 @@
+name: Production Node.js DevSecOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: devsecops-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: lokeshzenbook/node-app2
+  NODE_VERSION: 18
+
+jobs:
+
+  # =========================================================
+  # Secrets Detection Stage
+  # =========================================================
+  secrets-scan:
+    name: Secrets Scan - Gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+
+      # ---------- Checkout ----------
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------- Gitleaks ----------
+      - name: Run Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================
+  # Build Test Security Scan Stage
+  # =========================================================
+  ci-cd:
+    name: Build Test Scan Push
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+    timeout-minutes: 45
+
+    steps:
+
+      # ---------- Checkout ----------
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      # ---------- Setup Node ----------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # ---------- Install Dependencies ----------
+      - name: Install Dependencies
+        run: npm ci
+
+      # ---------- Run Tests ----------
+      - name: Run Unit Tests
+        run: npm test
+
+      # ---------- Build Application ----------
+      - name: Build Application
+        run: npm run build
+
+      # # ---------- SonarCloud Scan ----------
+      # - name: SonarCloud Scan
+      #   uses: SonarSource/sonarqube-scan-action@v5.0.0
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: https://sonarcloud.io
+      #   with:
+      #     args: >
+      #       -Dsonar.qualitygate.wait=true
+
+      # ---------- Install Trivy ----------
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            wget \
+            apt-transport-https \
+            gnupg \
+            lsb-release
+
+          wget -qO - \
+          https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+          sudo apt-key add -
+
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
+          sudo tee /etc/apt/sources.list.d/trivy.list
+
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      # ---------- Filesystem Scan ----------
+      - name: Run Trivy Filesystem Scan
+        run: |
+          trivy fs \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output trivy-results.sarif \
+            .
+
+      # ---------- Upload SARIF ----------
+      - name: Upload Trivy SARIF Report
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      # ---------- Generate Scan Summary ----------
+      - name: Generate Trivy Summary
+        run: |
+          trivy fs \
+            --severity HIGH,CRITICAL \
+            --no-progress . > trivy-report.txt
+
+          CRITICAL=$(grep -i CRITICAL trivy-report.txt | wc -l)
+          HIGH=$(grep -i HIGH trivy-report.txt | wc -l)
+
+          echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
+          echo "HIGH=$HIGH" >> $GITHUB_ENV
+
+      # ---------- Upload Trivy Artifact ----------
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+          retention-days: 30
+
+      # ---------- Docker Buildx ----------
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ---------- DockerHub Login ----------
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # ---------- Generate Docker Tag ----------
+      - name: Generate Image Tag
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      # ---------- Docker Metadata ----------
+      - name: Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+
+      # ---------- Build Docker Image ----------
+      - name: Build Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---------- Container Image Scan ----------
+      - name: Run Trivy Image Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+      # ---------- Generate SBOM ----------
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      # ---------- Upload SBOM ----------
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+          retention-days: 30
+
+      # ---------- Email Notification ----------
+      - name: Send Email Notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+
+          subject: "Production DevSecOps Pipeline 🚀"
+
+          body: |
+            Pipeline Status: ${{ job.status }}
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+
+            Docker Images:
+            - $IMAGE_NAME:latest
+            - $IMAGE_NAME:${{ env.IMAGE_TAG }}
+
+            Security Summary:
+            - Critical: ${{ env.CRITICAL }}
+            - High: ${{ env.HIGH }}
+
+            Workflow:
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          to: your-email@gmail.com
+          from: GitHub Actions
+
+          attachments: |
+            trivy-report.txt
+
+      # ---------- Slack Notification ----------
+      - name: Send Slack Notification
+        if: always()
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          STATUS="${{ job.status }}"
+          COLOR="#36a64f"
+
+          if [ "$STATUS" != "success" ]; then
+            COLOR="#ff0000"
+          fi
+
+          curl -X POST \
+          -H 'Content-type: application/json' \
+          --data "{
+            \"attachments\": [
+              {
+                \"color\": \"$COLOR\",
+                \"blocks\": [
+                  {
+                    \"type\": \"header\",
+                    \"text\": {
+                      \"type\": \"plain_text\",
+                      \"text\": \"🚀 Production DevSecOps Pipeline\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Status:*\\n$STATUS\"
+                      },
+                      {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"*Branch:*\\n${{ github.ref_name }}\"
+                      }
+                    ]
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🐳 Docker Image:*\\n$IMAGE_NAME:${{ env.IMAGE_TAG }}\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*🔐 Trivy Summary:*\\nCritical: ${{ env.CRITICAL }}\\nHigh: ${{ env.HIGH }}\"
+                    }
+                  },
+                  {
+                    \"type\": \"actions\",
+                    \"elements\": [
+                      {
+                        \"type\": \"button\",
+                        \"text\": {
+                          \"type\": \"plain_text\",
+                          \"text\": \"View Workflow\"
+                        },
+                        \"url\": \"$RUN_URL\"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }" \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
