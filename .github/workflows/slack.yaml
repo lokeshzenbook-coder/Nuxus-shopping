@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app4
+  IMAGE_NAME: lokeshzenbook/node-app2
 
 jobs:
   ci-cd:
