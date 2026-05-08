@@ -3,6 +3,7 @@ name: Node.js CI/CD Pipeline
 on:
   push:
     branches: ["main"]
+
   pull_request:
     branches: ["main"]
 
@@ -10,10 +11,35 @@ env:
   IMAGE_NAME: lokeshzenbook/node-app2
 
 jobs:
-  ci-cd:
+
+  # =========================================================
+  # Secrets Scan Stage
+  # =========================================================
+  secrets-scan:
+    name: Secrets - Gitleaks Scan
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks secrets scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================
+  # Main CI/CD Pipeline
+  # =========================================================
+  ci-cd:
+    name: Build Test Scan Push
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+
+    steps:
+
       # ---------- Checkout ----------
       - name: Checkout source
         uses: actions/checkout@v4
@@ -24,23 +50,40 @@ jobs:
         with:
           node-version: 18
 
-      # ---------- Build & Test ----------
+      # ---------- Install Dependencies ----------
       - name: Install dependencies
         run: npm install
 
+      # ---------- Run Tests ----------
       - name: Run tests
         run: npm test
 
+      # ---------- Build Application ----------
       - name: Build application
         run: npm run build
+
+      # ---------- SonarCloud Scan ----------
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
 
       # ---------- Install Trivy ----------
       - name: Install Trivy
         run: |
           sudo apt-get update
           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+
           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
+          sudo tee -a /etc/apt/sources.list.d/trivy.list
+
           sudo apt-get update
           sudo apt-get install -y trivy
 
@@ -48,7 +91,7 @@ jobs:
       - name: Run Trivy FS Scan
         run: |
           trivy fs --severity HIGH,CRITICAL --no-progress . > trivy-report.txt
-          
+
           CRITICAL=$(grep -i CRITICAL trivy-report.txt | wc -l)
           HIGH=$(grep -i HIGH trivy-report.txt | wc -l)
 
@@ -91,7 +134,9 @@ jobs:
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
+
           subject: "CI/CD Pipeline Status 🚀"
+
           body: |
             Pipeline Status: ${{ job.status }}
 
@@ -121,7 +166,10 @@ jobs:
 
           STATUS="${{ job.status }}"
           COLOR="#36a64f"
-          if [ "$STATUS" != "success" ]; then COLOR="#ff0000"; fi
+
+          if [ "$STATUS" != "success" ]; then
+            COLOR="#ff0000"
+          fi
 
           curl -X POST -H 'Content-type: application/json' \
           --data "{
