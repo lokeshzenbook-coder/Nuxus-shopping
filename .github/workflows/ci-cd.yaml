@@ -3,11 +3,18 @@ name: Node.js CI/CD Pipeline
 on:
   push:
     branches: ["main"]
+
   pull_request:
     branches: ["main"]
 
+permissions:
+  id-token: write
+  contents: read
+
 env:
   IMAGE_NAME: lokeshzenbook/node-app
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: node-app
 
 jobs:
   ci-cd:
@@ -18,19 +25,21 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # ---------- Node Setup ----------
+      # ---------- Setup Node.js ----------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      # ---------- Build & Test ----------
+      # ---------- Install Dependencies ----------
       - name: Install dependencies
         run: npm install
 
+      # ---------- Run Tests ----------
       - name: Run tests
         run: npm test
 
+      # ---------- Build Application ----------
       - name: Build application
         run: npm run build
 
@@ -39,16 +48,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+
           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
+          | sudo tee -a /etc/apt/sources.list.d/trivy.list
+
           sudo apt-get update
           sudo apt-get install -y trivy
 
-      # ---------- Trivy Scan ----------
+      # ---------- Trivy Filesystem Scan ----------
       - name: Run Trivy FS Scan
-        run: trivy fs . > trivy-report.txt
+        run: |
+          trivy fs . > trivy-report.txt
 
-      # ---------- Upload Report ----------
+      # ---------- Upload Trivy Report ----------
       - name: Upload Trivy Report
         uses: actions/upload-artifact@v4
         with:
@@ -62,48 +76,68 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # ---------- Build & Push to Docker Hub ----------
-      - name: Build and Push Docker Image
+      # ---------- Build Docker Images ----------
+      - name: Build Docker Images
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
-          
+
           docker build -t $IMAGE_NAME:latest .
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          
+
+      # ---------- Push Docker Hub Images ----------
+      - name: Push Docker Hub Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
           docker push $IMAGE_NAME:latest
           docker push $IMAGE_NAME:$IMAGE_TAG
 
-      # # ---------- Configure AWS Credentials ----------
-      # - name: Configure AWS Credentials
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #     aws-region: ${{ secrets.AWS_REGION }}
+      # ---------- Configure AWS Credentials Using OIDC ----------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::590184029746:role/github-actions-oidc-role
+          aws-region: ${{ env.AWS_REGION }}
 
-      # # ---------- Login to Amazon ECR ----------
-      # - name: Login to Amazon ECR
-      #   uses: aws-actions/amazon-ecr-login@v2
+      # ---------- Verify AWS Identity ----------
+      - name: Verify AWS Identity
+        run: aws sts get-caller-identity
 
-      # # ✅ ---------- Create ECR Repo if Not Exists ----------
-      # - name: Create ECR Repository if not exists
-      #   run: |
-      #     aws ecr describe-repositories --repository-names node-app \
-      #     || aws ecr create-repository --repository-name node-app
+      # ---------- Login to Amazon ECR ----------
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      # # ---------- Push to ECR ----------
-      # - name: Tag and Push to ECR
-      #   run: |
-      #     IMAGE_TAG=${GITHUB_SHA::7}
-          
-          # ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          # ECR_REPOSITORY=node-app
+      # ---------- Create ECR Repository if Not Exists ----------
+      - name: Create ECR Repository
+        run: |
+          aws ecr describe-repositories \
+            --repository-names $ECR_REPOSITORY \
+          || aws ecr create-repository \
+            --repository-name $ECR_REPOSITORY
 
-          # docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          # docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      # ---------- Tag Docker Images for ECR ----------
+      - name: Tag Docker Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
 
-          # docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          # docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+
+          docker tag $IMAGE_NAME:latest \
+            $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          docker tag $IMAGE_NAME:$IMAGE_TAG \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # ---------- Push Docker Images to ECR ----------
+      - name: Push Docker Images to ECR
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
       # ---------- Email Notification ----------
       - name: Send Email Notification
@@ -112,23 +146,29 @@ jobs:
         with:
           server_address: smtp.gmail.com
           server_port: 465
+          secure: true
+
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "CI/CD Pipeline Status 🚀"
+
+          subject: "Node.js CI/CD Pipeline Status 🚀"
+
           body: |
             Pipeline Status: ${{ job.status }}
 
             Repository: ${{ github.repository }}
             Branch: ${{ github.ref_name }}
 
-            Docker Images:
+            Docker Hub Images:
             - $IMAGE_NAME:latest
             - $IMAGE_NAME:${{ github.sha }}
 
-            ECR Images:
-            - ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/node-app:latest
+            Amazon ECR Images:
+            - ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
 
-            Trivy scan completed. Check attached report.
+            Trivy scan completed successfully.
+
           to: your-email@gmail.com
           from: GitHub Actions
+
           attachments: trivy-report.txt
