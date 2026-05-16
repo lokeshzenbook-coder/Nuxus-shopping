@@ -1,0 +1,398 @@
+name: Production Node.js DevSecOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+env:
+  IMAGE_NAME: lokeshzenbook/node-app2
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: node-app
+
+# =========================================================
+# JOBS
+# =========================================================
+
+jobs:
+
+  # =========================================================
+  # STAGE 1 — SOURCE VALIDATION
+  # =========================================================
+
+  checkout-and-setup:
+    name: Checkout & Setup
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.image-tag.outputs.tag }}
+
+    steps:
+      # ---------- Checkout ----------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ---------- Setup Node ----------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # ---------- Cache Node Modules ----------
+      - name: Cache Node Modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: node-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            node-${{ runner.os }}-
+
+      # ---------- Generate Image Tag ----------
+      - name: Generate Image Tag
+        id: image-tag
+        run: |
+          echo "tag=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+  # =========================================================
+  # STAGE 2 — BUILD & TEST
+  # =========================================================
+
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    needs: checkout-and-setup
+
+    steps:
+      # ---------- Checkout ----------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ---------- Setup Node ----------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # ---------- Install Dependencies ----------
+      - name: Install Dependencies
+        run: npm install
+
+      # ---------- Run Unit Tests ----------
+      - name: Run Unit Tests
+        run: npm test
+
+      # ---------- Build Application ----------
+      - name: Build Application
+        run: npm run build
+
+  # =========================================================
+  # STAGE 3 — DEVSECOPS SECURITY SCANS
+  # =========================================================
+
+  security-scans:
+    name: DevSecOps Security Scans
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      # ---------- Checkout ----------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # =====================================================
+      # TRIVY INSTALLATION
+      # =====================================================
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            wget \
+            apt-transport-https \
+            gnupg \
+            lsb-release
+
+          wget -qO - \
+            https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | sudo apt-key add -
+
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb \
+          $(lsb_release -sc) main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      # =====================================================
+      # FILE SYSTEM SCAN
+      # =====================================================
+
+      - name: Run Trivy Filesystem Scan
+        run: |
+          trivy fs . \
+          --severity HIGH,CRITICAL \
+          --format table \
+          --output trivy-fs-report.txt
+
+      # =====================================================
+      # SECRET SCAN
+      # =====================================================
+
+      - name: Run Trivy Secret Scan
+        run: |
+          trivy fs . \
+          --scanners secret \
+          --format table \
+          --output trivy-secret-report.txt
+
+      # =====================================================
+      # UPLOAD REPORTS
+      # =====================================================
+
+      - name: Upload Trivy FS Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: trivy-fs-report.txt
+
+      - name: Upload Trivy Secret Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-secret-report
+          path: trivy-secret-report.txt
+
+  # =========================================================
+  # STAGE 4 — DOCKER BUILD
+  # =========================================================
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: security-scans
+
+    steps:
+      # ---------- Checkout ----------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # =====================================================
+      # DOCKER BUILD
+      # =====================================================
+
+      - name: Build Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          docker build \
+            -t $IMAGE_NAME:latest \
+            -t $IMAGE_NAME:$IMAGE_TAG \
+            .
+
+      # =====================================================
+      # SAVE IMAGE
+      # =====================================================
+
+      - name: Export Docker Image
+        run: |
+          docker save $IMAGE_NAME:latest \
+          -o node-app-image.tar
+
+      # =====================================================
+      # UPLOAD IMAGE
+      # =====================================================
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: node-app-image.tar
+
+  # =========================================================
+  # STAGE 5 — PUSH TO DOCKER HUB
+  # =========================================================
+
+  dockerhub-push:
+    name: Push to Docker Hub
+    runs-on: ubuntu-latest
+    needs: docker-build
+
+    steps:
+      # ---------- Download Image ----------
+      - name: Download Docker Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      # ---------- Load Image ----------
+      - name: Load Docker Image
+        run: docker load -i node-app-image.tar
+
+      # ---------- Docker Hub Login ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # ---------- Push Image ----------
+      - name: Push Docker Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
+
+  # =========================================================
+  # STAGE 6 — AWS OIDC AUTHENTICATION
+  # =========================================================
+
+  aws-authentication:
+    name: AWS OIDC Authentication
+    runs-on: ubuntu-latest
+    needs: dockerhub-push
+
+    steps:
+      # ---------- Configure AWS Credentials ----------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::590184029746:role/github-actions-oidc-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ---------- Verify AWS Identity ----------
+      - name: Verify AWS Authentication
+        run: aws sts get-caller-identity
+
+  # =========================================================
+  # STAGE 7 — PUSH TO AMAZON ECR
+  # =========================================================
+
+  push-to-ecr:
+    name: Push to Amazon ECR
+    runs-on: ubuntu-latest
+    needs: aws-authentication
+
+    steps:
+      # ---------- Download Image ----------
+      - name: Download Docker Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      # ---------- Load Image ----------
+      - name: Load Docker Image
+        run: docker load -i node-app-image.tar
+
+      # ---------- Configure AWS Credentials ----------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::590184029746:role/github-actions-oidc-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ---------- Login to Amazon ECR ----------
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ---------- Create Repository ----------
+      - name: Create ECR Repository if Not Exists
+        run: |
+          aws ecr describe-repositories \
+            --repository-names $ECR_REPOSITORY \
+          || aws ecr create-repository \
+            --repository-name $ECR_REPOSITORY
+
+      # ---------- Tag Docker Image ----------
+      - name: Tag Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+
+          docker tag $IMAGE_NAME:latest \
+          $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          docker tag $IMAGE_NAME:$IMAGE_TAG \
+          $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # ---------- Push Docker Images ----------
+      - name: Push Docker Images to ECR
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+
+          docker push \
+          $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          docker push \
+          $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+  # =========================================================
+  # STAGE 8 — NOTIFICATIONS
+  # =========================================================
+
+  notifications:
+    name: Pipeline Notifications
+    runs-on: ubuntu-latest
+    needs:
+      - push-to-ecr
+
+    if: always()
+
+    steps:
+      # ---------- Download Reports ----------
+      - name: Download Reports
+        uses: actions/download-artifact@v4
+
+      # ---------- Send Email ----------
+      - name: Send Email Notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+
+          subject: "Production DevSecOps Pipeline Status 🚀"
+
+          body: |
+            Pipeline Status: ${{ job.status }}
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+
+            =================================================
+
+            Docker Hub Images:
+            - $IMAGE_NAME:latest
+            - $IMAGE_NAME:${{ github.sha }}
+
+            =================================================
+
+            Amazon ECR Images:
+            - ${{ env.ECR_REPOSITORY }}:latest
+
+            =================================================
+
+            Security scans completed successfully.
+
+          to: your-email@gmail.com
+          from: GitHub Actions
+
+          attachments: |
+            trivy-fs-report.txt,
+            trivy-secret-report.txt
