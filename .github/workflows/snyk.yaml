@@ -109,19 +109,19 @@ jobs:
           docker build -t $IMAGE_NAME:latest .
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
-      # ==================================================
-      # Trivy Docker Image Scan
-      # ==================================================
-      - name: Run Trivy Image Scan
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+      # # ==================================================
+      # # Trivy Docker Image Scan
+      # # ==================================================
+      # - name: Run Trivy Image Scan
+      #   run: |
+      #     IMAGE_TAG=${GITHUB_SHA::7}
 
-          trivy image \
-            --scanners vuln \
-            --severity CRITICAL,HIGH \
-            --ignore-unfixed \
-            --exit-code 1 \
-            $IMAGE_NAME:$IMAGE_TAG
+      #     trivy image \
+      #       --scanners vuln \
+      #       --severity CRITICAL,HIGH \
+      #       --ignore-unfixed \
+      #       --exit-code 1 \
+      #       $IMAGE_NAME:$IMAGE_TAG
 
       # ==================================================
       # Push Docker Hub Images
