@@ -229,3 +229,26 @@ jobs:
           from: GitHub Actions
 
           attachments: trivy-report.txt
+      # ==============================
+      # Slack Notification
+      # ==============================
+      - name: Slack Notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "🚀 Node.js DevSecOps Pipeline Completed
+
+              Repository: ${{ github.repository }}
+              Branch: ${{ github.ref_name }}
+              Status: ${{ job.status }}
+
+              Docker Image:
+              ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+              ECR Repository:
+              ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
