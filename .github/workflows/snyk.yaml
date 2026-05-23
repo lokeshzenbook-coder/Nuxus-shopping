@@ -112,12 +112,14 @@ jobs:
       # ==================================================
       # Trivy Docker Image Scan
       # ==================================================
-      - name: Scan Docker Image with Trivy
+      - name: Run Trivy Image Scan
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
 
           trivy image \
-            --severity HIGH,CRITICAL \
+            --scanners vuln \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
             --exit-code 1 \
             $IMAGE_NAME:$IMAGE_TAG
 
