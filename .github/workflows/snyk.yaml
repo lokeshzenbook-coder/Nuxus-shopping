@@ -240,17 +240,36 @@ jobs:
         with:
           payload: |
             {
-              "text": "🚀 Node.js DevSecOps Pipeline Completed
-
-              Repository: ${{ github.repository }}
-              Branch: ${{ github.ref_name }}
-              Status: ${{ job.status }}
-
-              Docker Image:
-              ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-              ECR Repository:
-              ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}"
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*🚀 Node.js DevSecOps Pipeline Completed*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n${{ github.repository }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${{ github.ref_name }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Status:*\n${{ job.status }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Docker Image:*\n${{ env.IMAGE_NAME }}:${{ github.sha }}"
+                    }
+                  ]
+                }
+              ]
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
