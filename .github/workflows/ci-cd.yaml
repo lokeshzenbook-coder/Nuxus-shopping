@@ -1,174 +1,247 @@
-# name: Node.js CI/CD Pipeline
+name: Node.js CI/CD Pipeline
 
-# on:
-#   push:
-#     branches: ["main"]
+on:
+  push:
+    branches:
+      - main
 
-#   pull_request:
-#     branches: ["main"]
+  pull_request:
+    branches:
+      - main
 
-# permissions:
-#   id-token: write
-#   contents: read
+permissions:
+  id-token: write
+  contents: read
 
-# env:
-#   IMAGE_NAME: lokeshzenbook/node-app
-#   AWS_REGION: us-east-1
-#   ECR_REPOSITORY: node-app
+env:
+  IMAGE_NAME: lokeshzenbook/node-app66
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: node-app
 
-# jobs:
-#   ci-cd:
-#     runs-on: ubuntu-latest
+jobs:
+  # ==================================================
+  # LINT JOB
+  # ==================================================
+  lint:
+    name: Lint Check
+    runs-on: ubuntu-latest
 
-#     steps:
-#       # ---------- Checkout ----------
-#       - name: Checkout source
-#         uses: actions/checkout@v4
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-#       # ---------- Setup Node.js ----------
-#       - name: Setup Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: 18
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
 
-#       # ---------- Install Dependencies ----------
-#       - name: Install dependencies
-#         run: npm install
+      - name: Install dependencies
+        run: npm ci
 
-#       # ---------- Run Tests ----------
-#       - name: Run tests
-#         run: npm test
+      - name: Run ESLint
+        run: npm run lint
 
-#       # ---------- Build Application ----------
-#       - name: Build application
-#         run: npm run build
+  # ==================================================
+  # UNIT TEST JOB
+  # ==================================================
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
 
-#       # ---------- Install Trivy ----------
-#       - name: Install Trivy
-#         run: |
-#           sudo apt-get update
-#           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-#           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
 
-#           echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
-#           | sudo tee -a /etc/apt/sources.list.d/trivy.list
+      - name: Install dependencies
+        run: npm ci
 
-#           sudo apt-get update
-#           sudo apt-get install -y trivy
+      - name: Run Unit Tests
+        run: npm run test:unit
 
-#       # ---------- Trivy Filesystem Scan ----------
-#       - name: Run Trivy FS Scan
-#         run: |
-#           trivy fs . > trivy-report.txt
+      - name: Generate Test Coverage
+        run: npm run test:coverage
 
-#       # ---------- Upload Trivy Report ----------
-#       - name: Upload Trivy Report
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: trivy-report
-#           path: trivy-report.txt
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
 
-#       # ---------- Docker Hub Login ----------
-#       - name: Login to Docker Hub
-#         uses: docker/login-action@v3
-#         with:
-#           username: ${{ secrets.DOCKER_USERNAME }}
-#           password: ${{ secrets.DOCKER_PASSWORD }}
+  # ==================================================
+  # BUILD & DEPLOY JOB
+  # ==================================================
+  build-deploy:
+    name: Build, Scan & Deploy
+    runs-on: ubuntu-latest
+    needs: unit-test
 
-#       # ---------- Build Docker Images ----------
-#       - name: Build Docker Images
-#         run: |
-#           IMAGE_TAG=${GITHUB_SHA::7}
+    steps:
+      # ---------- Checkout ----------
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-#           docker build -t $IMAGE_NAME:latest .
-#           docker build -t $IMAGE_NAME:$IMAGE_TAG .
+      # ---------- Setup Node.js ----------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
 
-#       # ---------- Push Docker Hub Images ----------
-#       - name: Push Docker Hub Images
-#         run: |
-#           IMAGE_TAG=${GITHUB_SHA::7}
+      # ---------- Install Dependencies ----------
+      - name: Install dependencies
+        run: npm ci
 
-#           docker push $IMAGE_NAME:latest
-#           docker push $IMAGE_NAME:$IMAGE_TAG
+      # ---------- Build Application ----------
+      - name: Build application
+        run: npm run build
 
-#       # ---------- Configure AWS Credentials Using OIDC ----------
-#       - name: Configure AWS Credentials
-#         uses: aws-actions/configure-aws-credentials@v4
-#         with:
-#           role-to-assume: arn:aws:iam::590184029746:role/github-actions-oidc-role
-#           aws-region: ${{ env.AWS_REGION }}
+      # ---------- Install Trivy ----------
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
 
-#       # ---------- Verify AWS Identity ----------
-#       - name: Verify AWS Identity
-#         run: aws sts get-caller-identity
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
 
-#       # ---------- Login to Amazon ECR ----------
-#       - name: Login to Amazon ECR
-#         id: login-ecr
-#         uses: aws-actions/amazon-ecr-login@v2
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
 
-#       # ---------- Create ECR Repository if Not Exists ----------
-#       - name: Create ECR Repository
-#         run: |
-#           aws ecr describe-repositories \
-#             --repository-names $ECR_REPOSITORY \
-#           || aws ecr create-repository \
-#             --repository-name $ECR_REPOSITORY
+          sudo apt-get update
+          sudo apt-get install -y trivy
 
-#       # ---------- Tag Docker Images for ECR ----------
-#       - name: Tag Docker Images
-#         run: |
-#           IMAGE_TAG=${GITHUB_SHA::7}
+      # ---------- Trivy Filesystem Scan ----------
+      - name: Run Trivy FS Scan
+        run: |
+          trivy fs \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            . > trivy-report.txt
 
-#           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+      # ---------- Upload Trivy Report ----------
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
 
-#           docker tag $IMAGE_NAME:latest \
-#             $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      # ---------- Docker Hub Login ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-#           docker tag $IMAGE_NAME:$IMAGE_TAG \
-#             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      # ---------- Build Docker Images ----------
+      - name: Build Docker Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
 
-#       # ---------- Push Docker Images to ECR ----------
-#       - name: Push Docker Images to ECR
-#         run: |
-#           IMAGE_TAG=${GITHUB_SHA::7}
+          docker build -t $IMAGE_NAME:latest .
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
-#           ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+      # ---------- Trivy Docker Image Scan ----------
+      - name: Scan Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
 
-#           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-#           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            $IMAGE_NAME:$IMAGE_TAG
 
-#       # ---------- Email Notification ----------
-#       - name: Send Email Notification
-#         if: always()
-#         uses: dawidd6/action-send-mail@v3
-#         with:
-#           server_address: smtp.gmail.com
-#           server_port: 465
-#           secure: true
+      # ---------- Push Docker Hub Images ----------
+      - name: Push Docker Hub Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
 
-#           username: ${{ secrets.EMAIL_USERNAME }}
-#           password: ${{ secrets.EMAIL_PASSWORD }}
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
 
-#           subject: "Node.js CI/CD Pipeline Status 🚀"
+      # # ---------- Configure AWS Credentials ----------
+      # - name: Configure AWS Credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: arn:aws:iam::590184029746:role/github-actions-oidc-role
+      #     aws-region: ${{ env.AWS_REGION }}
 
-#           body: |
-#             Pipeline Status: ${{ job.status }}
+      # # ---------- Verify AWS Identity ----------
+      # - name: Verify AWS Identity
+      #   run: aws sts get-caller-identity
 
-#             Repository: ${{ github.repository }}
-#             Branch: ${{ github.ref_name }}
+      # # ---------- Login to Amazon ECR ----------
+      # - name: Login to Amazon ECR
+      #   id: login-ecr
+      #   uses: aws-actions/amazon-ecr-login@v2
 
-#             Docker Hub Images:
-#             - $IMAGE_NAME:latest
-#             - $IMAGE_NAME:${{ github.sha }}
+      # # ---------- Create ECR Repository ----------
+      # - name: Create ECR Repository if Missing
+      #   run: |
+      #     aws ecr describe-repositories \
+      #       --repository-names $ECR_REPOSITORY \
+      #     || aws ecr create-repository \
+      #       --repository-name $ECR_REPOSITORY
 
-#             Amazon ECR Images:
-#             - ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+      # # ---------- Tag Docker Images ----------
+      # - name: Tag Docker Images
+      #   run: |
+      #     IMAGE_TAG=${GITHUB_SHA::7}
+      #     ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
 
-#             Trivy scan completed successfully.
+      #     docker tag $IMAGE_NAME:latest \
+      #       $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-#           to: your-email@gmail.com
-#           from: GitHub Actions
+      #     docker tag $IMAGE_NAME:$IMAGE_TAG \
+      #       $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-#           attachments: trivy-report.txt
+      # # ---------- Push Docker Images to ECR ----------
+      # - name: Push Docker Images to ECR
+      #   run: |
+      #     IMAGE_TAG=${GITHUB_SHA::7}
+      #     ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+
+      #     docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      #     docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # ---------- Email Notification ----------
+      - name: Send Email Notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+
+          subject: "Node.js CI/CD Pipeline Status 🚀"
+
+          body: |
+            Pipeline Status: ${{ job.status }}
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+
+            Quality Gates Passed:
+            ✓ ESLint
+            ✓ Unit Tests
+            ✓ Build
+            ✓ Trivy Security Scan
+
+            Docker Hub:
+            - $IMAGE_NAME:latest
+
+            # Amazon ECR:
+            # - ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+          to: your-email@gmail.com
+          from: GitHub Actions
+
+          attachments: trivy-report.txt
