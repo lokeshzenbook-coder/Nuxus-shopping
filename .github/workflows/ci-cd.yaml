@@ -15,8 +15,6 @@ permissions:
 
 env:
   IMAGE_NAME: lokeshzenbook/node-app66
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: node-app
 
 jobs:
   # ==================================================
