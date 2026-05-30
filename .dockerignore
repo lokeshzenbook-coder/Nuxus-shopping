@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+
+# Node.js
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+# Logs
+logs/
+*.log
+
+# IDE Files
+.vscode/
+.idea/
+*.swp
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Docker Files
+Dockerfile
+docker-compose.yml
+
+# Build Artifacts
+dist/
+build/
+target/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Kubernetes
+*.yaml.bak
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets/
