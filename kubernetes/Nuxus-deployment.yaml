@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nuxus-deployment
+  labels:
+    app: nuxus
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nuxus
+  template:
+    metadata:
+      labels:
+        app: nuxus
+    spec:
+      containers:
+      - name: nuxus
+        image: node-app66:latest
+        ports:
+        - containerPort: 80
