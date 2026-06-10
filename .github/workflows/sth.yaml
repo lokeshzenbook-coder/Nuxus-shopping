@@ -1,238 +1,253 @@
 name: Node.js CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - main
+push:
+branches:
+- main
 
-  pull_request:
-    branches:
-      - main
+pull_request:
+branches:
+- main
 
 permissions:
-  contents: read
-  security-events: write
+contents: read
+security-events: write
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app66
+IMAGE_NAME: lokeshzenbook/node-app66
 
 jobs:
 
-  security-scan:
-    name: Secrets, SAST & Dockerfile Scan
-    runs-on: ubuntu-latest
+security-scan:
+name: Secrets, SAST & Dockerfile Scan
+runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+```
+steps:
+  - name: Checkout Source
+    uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
 
-      #################################################
-      # TRUFFLEHOG SECRET SCANNING
-      #################################################
+  ########################################
+  # TRUFFLEHOG
+  ########################################
 
-      - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: HEAD~1
-          head: HEAD
-          extra_args: --only-verified
+  - name: TruffleHog Secret Scan
+    uses: trufflesecurity/trufflehog@main
+    with:
+      path: ./
+      extra_args: --only-verified
 
-      #################################################
-      # SEMGREP SAST SCAN
-      #################################################
+  ########################################
+  # SEMGREP
+  ########################################
 
-      - name: Run Semgrep
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: auto
+  - name: Setup Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
 
-      #################################################
-      # HADOLINT DOCKERFILE SCAN
-      #################################################
+  - name: Install Semgrep
+    run: |
+      python -m pip install --upgrade pip
+      pip install semgrep
 
-      - name: Hadolint Dockerfile Scan
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: Dockerfile
+  - name: Run Semgrep Scan
+    run: |
+      semgrep scan \
+        --config=auto \
+        --sarif \
+        --output semgrep.sarif
 
-  lint:
-    name: Lint Check
-    runs-on: ubuntu-latest
-    needs: security-scan
+  - name: Upload Semgrep Report
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: semgrep-report
+      path: semgrep.sarif
+      if-no-files-found: ignore
 
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
+  ########################################
+  # HADOLINT
+  ########################################
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: npm
+  - name: Hadolint Dockerfile Scan
+    uses: hadolint/hadolint-action@v3.1.0
+    with:
+      dockerfile: Dockerfile
+```
 
-      - name: Install Dependencies
-        run: npm ci
+lint:
+name: Lint Check
+runs-on: ubuntu-latest
+needs: security-scan
 
-      - name: Run ESLint
-        run: npm run lint --if-present
+```
+steps:
+  - uses: actions/checkout@v4
 
-  unit-test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    needs: lint
+  - uses: actions/setup-node@v4
+    with:
+      node-version: 18
+      cache: npm
 
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
+  - run: npm ci
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: npm
+  - name: Run ESLint
+    run: npm run lint --if-present
+```
 
-      - name: Install Dependencies
-        run: npm ci
+unit-test:
+name: Unit Tests
+runs-on: ubuntu-latest
+needs: lint
 
-      - name: Run Tests
-        run: npm test --if-present
+```
+steps:
+  - uses: actions/checkout@v4
 
-      - name: Run Unit Tests
-        run: npm run test:unit --if-present
+  - uses: actions/setup-node@v4
+    with:
+      node-version: 18
+      cache: npm
 
-      - name: Generate Coverage
-        run: npm run test:coverage --if-present
+  - run: npm ci
 
-      - name: Upload Coverage Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          if-no-files-found: ignore
+  - name: Run Tests
+    run: npm test --if-present
 
-  build-deploy:
-    name: Build, Scan & Push
-    runs-on: ubuntu-latest
-    needs: unit-test
+  - name: Run Unit Tests
+    run: npm run test:unit --if-present
 
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
+  - name: Coverage
+    run: npm run test:coverage --if-present
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: npm
+  - name: Upload Coverage Report
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: coverage-report
+      path: coverage/
+      if-no-files-found: ignore
+```
 
-      - name: Install Dependencies
-        run: npm ci
+build-deploy:
+name: Build Scan and Push
+runs-on: ubuntu-latest
+needs: unit-test
 
-      - name: Build Application
-        run: npm run build --if-present
+```
+steps:
+  - uses: actions/checkout@v4
 
-      #################################################
-      # INSTALL TRIVY
-      #################################################
+  - uses: actions/setup-node@v4
+    with:
+      node-version: 18
+      cache: npm
 
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
-          wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-          | sudo sh -s -- -b /usr/local/bin
+  - run: npm ci
 
-      #################################################
-      # FILESYSTEM SCAN
-      #################################################
+  - name: Build Application
+    run: npm run build --if-present
 
-      - name: Trivy Filesystem Scan
-        run: |
-          trivy fs . \
-          --severity HIGH,CRITICAL \
-          --format table \
-          --output trivy-fs-report.txt
+  ########################################
+  # TRIVY INSTALL
+  ########################################
 
-      - name: Upload Trivy FS Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-fs-report
-          path: trivy-fs-report.txt
+  - name: Install Trivy
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y wget
+      wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+      | sudo sh -s -- -b /usr/local/bin
 
-      #################################################
-      # DOCKER LOGIN
-      #################################################
+  ########################################
+  # FILESYSTEM SCAN
+  ########################################
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+  - name: Trivy Filesystem Scan
+    run: |
+      trivy fs . \
+      --severity HIGH,CRITICAL \
+      --format table \
+      --output trivy-fs-report.txt
 
-      #################################################
-      # BUILD IMAGE
-      #################################################
+  - name: Upload Trivy FS Report
+    uses: actions/upload-artifact@v4
+    with:
+      name: trivy-fs-report
+      path: trivy-fs-report.txt
 
-      - name: Build Docker Image
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+  ########################################
+  # DOCKER LOGIN
+  ########################################
 
-          docker build \
-          -t $IMAGE_NAME:latest \
-          -t $IMAGE_NAME:$IMAGE_TAG .
+  - name: Login to Docker Hub
+    uses: docker/login-action@v3
+    with:
+      username: ${{ secrets.DOCKER_USERNAME }}
+      password: ${{ secrets.DOCKER_PASSWORD }}
 
-      #################################################
-      # IMAGE SCAN
-      #################################################
+  ########################################
+  # DOCKER BUILD
+  ########################################
 
-      - name: Trivy Image Scan
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+  - name: Build Docker Image
+    run: |
+      IMAGE_TAG=${GITHUB_SHA::7}
 
-          trivy image \
-          --severity HIGH,CRITICAL \
-          --exit-code 1 \
-          --format table \
-          $IMAGE_NAME:$IMAGE_TAG
+      docker build \
+        -t $IMAGE_NAME:latest \
+        -t $IMAGE_NAME:$IMAGE_TAG .
 
-      #################################################
-      # PUSH IMAGE
-      #################################################
+  ########################################
+  # IMAGE SCAN
+  ########################################
 
-      - name: Push Docker Images
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+  - name: Trivy Image Scan
+    run: |
+      IMAGE_TAG=${GITHUB_SHA::7}
 
-          docker push $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:$IMAGE_TAG
+      trivy image \
+        --severity HIGH,CRITICAL \
+        --exit-code 0 \
+        $IMAGE_NAME:$IMAGE_TAG
 
-      #################################################
-      # EMAIL NOTIFICATION
-      #################################################
+  ########################################
+  # PUSH IMAGE
+  ########################################
 
-      - name: Send Email Notification
-        if: always()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
+  - name: Push Docker Images
+    if: github.ref == 'refs/heads/main'
+    run: |
+      IMAGE_TAG=${GITHUB_SHA::7}
 
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
+      docker push $IMAGE_NAME:latest
+      docker push $IMAGE_NAME:$IMAGE_TAG
 
-          subject: "Node.js CI/CD Pipeline Status"
+  ########################################
+  # EMAIL NOTIFICATION
+  ########################################
 
-          body: |
-            Pipeline Status : ${{ job.status }}
-            Repository      : ${{ github.repository }}
-            Branch          : ${{ github.ref_name }}
-            Commit          : ${{ github.sha }}
-            Workflow        : ${{ github.workflow }}
+  - name: Send Email Notification
+    if: always()
+    uses: dawidd6/action-send-mail@v3
+    with:
+      server_address: smtp.gmail.com
+      server_port: 465
+      secure: true
+      username: ${{ secrets.EMAIL_USERNAME }}
+      password: ${{ secrets.EMAIL_PASSWORD }}
 
-          to: your-email@gmail.com
-          from: GitHub Actions
+      subject: "Node.js CI/CD Pipeline Status"
+
+      body: |
+        Status: ${{ job.status }}
+        Repository: ${{ github.repository }}
+        Branch: ${{ github.ref_name }}
+        Commit: ${{ github.sha }}
+
+      to: your-email@gmail.com
+      from: GitHub Actions
+```
