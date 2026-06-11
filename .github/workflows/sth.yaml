@@ -14,7 +14,7 @@ permissions:
   security-events: write
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-app68
+  IMAGE_NAME: lokeshzenbook/node-app69
 
 jobs:
   # ──────────────────────────────────────────────
@@ -164,106 +164,71 @@ jobs:
   # JOB 5: Build & Push to Docker Hub
   # ──────────────────────────────────────────────
   build-deploy:
-    name: Build, Scan & Push
+    name: Build Scan and Push
     runs-on: ubuntu-latest
-    needs: trivy-fs-scan
-    timeout-minutes: 30
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: unit-test
 
     steps:
-      - name: Checkout Source
+      - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 18
           cache: npm
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: npm ci
 
       - name: Build Application
         run: npm run build --if-present
 
-      # ── Step 1: Enable multi-platform builds & layer cache ────────
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget
+          wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
-      # ── Step 2: Authenticate with Docker Hub ─────────────────────
-      # Requires secrets: DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
-      # DOCKERHUB_TOKEN = Docker Hub → Account Settings → Security → New Access Token
+      - name: Run Trivy Filesystem Scan
+        run: |
+          trivy fs . --severity HIGH,CRITICAL \
+          --format table > trivy-report.txt
+
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # ── Step 3: Generate tags and OCI labels automatically ────────
-      # Produces 3 tags:
-      #   lokeshzenbook/node-app68:latest
-      #   lokeshzenbook/node-app68:build-<run_number>
-      #   lokeshzenbook/node-app68:sha-<short_sha>
-      - name: Extract Docker Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable=true
-            type=raw,value=build-${{ github.run_number }}
-            type=sha,prefix=sha-,format=short
-
-      # ── Step 4: Build image and push all tags in one operation ────
-      # Uses GHA cache so repeat builds are fast
-      # build-args inject pinned apk versions into Dockerfile ARGs
-      - name: Build and Push Docker Image
-        id: build-push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            CURL_VERSION=8.11.1-r0
-            BASH_VERSION=5.2.26-r0
-            GIT_VERSION=2.47.2-r0
-
-      # ── Step 5: Confirm what was pushed ───────────────────────────
-      - name: Print Image Tags and Digest
+      - name: Build Docker Image
         run: |
-          echo "========================================"
-          echo "  Image pushed to Docker Hub"
-          echo "========================================"
-          echo "  Repository : ${{ env.IMAGE_NAME }}"
-          echo "  Tags       :"
-          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/    - /'
-          echo "  Digest     : ${{ steps.build-push.outputs.digest }}"
-          echo "========================================"
+          IMAGE_TAG=${GITHUB_SHA::7}
 
-      # ── Step 6: Scan the pushed image from registry ───────────────
-      # exit-code 0 = report CVEs but do not fail (image already live)
-      # Change to exit-code 1 to enforce zero CRITICAL/HIGH policy
-      - name: Run Trivy Image Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:latest
-          format: sarif
-          output: trivy-image.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "0"
-          ignore-unfixed: true
+          docker build -t $IMAGE_NAME:latest .
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
-      - name: Upload Trivy Image Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-image-report
-          path: trivy-image.sarif
-          if-no-files-found: ignore
+      - name: Scan Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          trivy image \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 \
+          $IMAGE_NAME:$IMAGE_TAG
+
+      - name: Push Docker Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
 
   # ──────────────────────────────────────────────
   # JOB 6: Collect All Reports & Send Gmail
