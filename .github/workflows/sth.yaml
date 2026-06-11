@@ -185,44 +185,35 @@ jobs:
 
       - name: Build Application
         run: npm run build --if-present
-
-      # ── Docker Setup ──────────────────────────
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+     
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # ── Generate Tags & Labels ────────────────
-      - name: Extract Docker Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable=true
-            type=raw,value=build-${{ github.run_number }}
+      - name: Build Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
 
-      # ── Build & Push in one step ──────────────
-      # Trivy image scan runs AFTER push using the registry reference
-      - name: Build and Push Docker Image
-        id: build-push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            CURL_VERSION=8.11.1-r0
-            BASH_VERSION=5.2.26-r0
-            GIT_VERSION=2.47.2-r0
+          docker build -t $IMAGE_NAME:latest .
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Scan Docker Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          trivy image \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 \
+          $IMAGE_NAME:$IMAGE_TAG
+
+      - name: Push Docker Images
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$IMAGE_TAG
 
       - name: Print Image Digest
         run: |
