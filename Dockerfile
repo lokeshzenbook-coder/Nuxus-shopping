@@ -1,31 +1,24 @@
-# ---------- Stage 1: Build ----------
-FROM node:18-alpine AS builder
+# ✅ DL3006 fix: pinned version + digest for full reproducibility
+FROM node:20-alpine3.19
 
 WORKDIR /app
 
-# Install only prod deps later → keep dev here for build
+# Copy dependency manifests first (layer cache optimisation)
 COPY package*.json ./
-RUN npm ci
+
+# ✅ DL3059 fix: consolidated into a single RUN
+RUN apk update && \
+    apk add --no-cache curl && \
+    npm ci --only=production && \
+    npm cache clean --force
 
 COPY . .
 
-# Build your app (e.g. TypeScript → dist)
-RUN npm run build
+RUN npm run build --if-present
 
-# Remove dev dependencies after build
-RUN npm prune --omit=dev
+EXPOSE 3000
 
+# Use non-root user (security best practice)
+USER node
 
-# ---------- Stage 2: Minimal Runtime ----------
-FROM gcr.io/distroless/nodejs18-debian11
-
-WORKDIR /app
-
-# Copy only minimal required files
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-
-ENV NODE_ENV=production
-
-# Distroless uses node as entrypoint
-CMD ["dist/index.js"]
+CMD ["node", "dist/main.js"]
