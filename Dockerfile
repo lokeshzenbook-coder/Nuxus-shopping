@@ -4,12 +4,11 @@ WORKDIR /app
 
 COPY package*.json ./
 
-# ✅ All apk packages pinned to exact versions
 RUN apk update && \
     apk add --no-cache \
-        curl=8.5.0-r0 \
-        bash=5.2.21-r0 \
-        git=2.43.0-r0 && \
+        curl=8.9.1-r2 \
+        bash=5.2.26-r0 \
+        git=2.45.2-r0 && \
     npm ci --only=production && \
     npm cache clean --force
 
