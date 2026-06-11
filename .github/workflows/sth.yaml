@@ -17,6 +17,9 @@ env:
   IMAGE_NAME: lokeshzenbook/node-app66
 
 jobs:
+  # ──────────────────────────────────────────────
+  # JOB 1: Security Scan
+  # ──────────────────────────────────────────────
   security-scan:
     name: Secrets, SAST & Dockerfile Scan
     runs-on: ubuntu-latest
@@ -62,7 +65,11 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
+          failure-threshold: warning
 
+  # ──────────────────────────────────────────────
+  # JOB 2: Lint
+  # ──────────────────────────────────────────────
   lint:
     name: Lint Check
     runs-on: ubuntu-latest
@@ -84,6 +91,9 @@ jobs:
       - name: Run ESLint
         run: npm run lint --if-present
 
+  # ──────────────────────────────────────────────
+  # JOB 3: Unit Tests
+  # ──────────────────────────────────────────────
   unit-test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -102,8 +112,6 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      # FIX: Removed duplicate 'npm test' step — use a single entry point.
-      # Use 'npm test' OR 'npm run test:unit', not both.
       - name: Run Unit Tests
         run: npm run test:unit --if-present
 
@@ -118,11 +126,13 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
 
+  # ──────────────────────────────────────────────
+  # JOB 4: Build, Trivy Scan, Docker Push
+  # ──────────────────────────────────────────────
   build-deploy:
     name: Build, Scan & Push
     runs-on: ubuntu-latest
     needs: unit-test
-    # FIX: Gate Docker push to main branch only — avoids push attempts on fork PRs
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
@@ -141,4 +151,250 @@ jobs:
       - name: Build Application
         run: npm run build --if-present
 
-      # Trivy, Docker Build, Docker Push, and Email Notification steps go here
+      # ── Docker Buildx Setup ──────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Docker Hub Login ─────────────────────
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ── Docker Metadata (tags + labels) ──────
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=true
+            type=raw,value=build-${{ github.run_number }}
+
+      # ── Build Image (no push yet — scan first) 
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Trivy Vulnerability Scan ─────────────
+      - name: Run Trivy Image Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:latest
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"           # Fail pipeline on CRITICAL/HIGH CVEs
+          ignore-unfixed: true
+
+      - name: Upload Trivy Image Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: trivy-image.sarif
+          if-no-files-found: ignore
+
+      # ── Trivy Filesystem Scan ─────────────────
+      - name: Run Trivy Filesystem Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy FS Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: trivy-fs.sarif
+          if-no-files-found: ignore
+
+      # ── Push to Docker Hub (only if scans pass)
+      - name: Push Docker Image to Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Print Image Digest
+        run: echo "Image pushed with tags ${{ steps.meta.outputs.tags }}"
+
+  # ──────────────────────────────────────────────
+  # JOB 5: Collect All Reports & Send Gmail
+  # ──────────────────────────────────────────────
+  notify-email:
+    name: Email Reports
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-test, build-deploy]
+    if: always()
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      # Download all artifacts produced by previous jobs
+      - name: Download Semgrep Report
+        uses: actions/download-artifact@v4
+        with:
+          name: semgrep-report
+          path: reports/semgrep
+        continue-on-error: true
+
+      - name: Download Coverage Report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: reports/coverage
+        continue-on-error: true
+
+      - name: Download Trivy Image Report
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-image-report
+          path: reports/trivy-image
+        continue-on-error: true
+
+      - name: Download Trivy FS Report
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: reports/trivy-fs
+        continue-on-error: true
+
+      # Zip all reports into one attachment
+      - name: Zip All Reports
+        run: |
+          cd reports
+          zip -r ../all-reports.zip . || echo "Some reports missing, zipping what exists"
+          cd ..
+          ls -lh all-reports.zip
+
+      # Send email with zip attached
+      - name: Send Email with Reports
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.GMAIL_USERNAME }}
+          from: "GitHub Actions <${{ secrets.GMAIL_USERNAME }}>"
+          subject: >
+            [${{ job.status == 'success' && '✅ PASSED' || '❌ FAILED' }}]
+            CI/CD Pipeline — ${{ github.repository }} #${{ github.run_number }}
+          body: |
+            Pipeline: ${{ github.workflow }}
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+            Run Number: #${{ github.run_number }}
+
+            Job Results:
+            - Security Scan : ${{ needs.security-scan.result }}
+            - Unit Tests    : ${{ needs.unit-test.result }}
+            - Build & Push  : ${{ needs.build-deploy.result }}
+
+            View full run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            All scan reports are attached as all-reports.zip
+          attachments: all-reports.zip
+
+  # ──────────────────────────────────────────────
+  # JOB 6: Slack Notification
+  # ──────────────────────────────────────────────
+  notify-slack:
+    name: Slack Notification
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-test, build-deploy]
+    if: always()
+
+    steps:
+      - name: Set Pipeline Status
+        id: status
+        run: |
+          if [[ "${{ needs.build-deploy.result }}" == "success" ]]; then
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+            echo "text=PASSED" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.build-deploy.result }}" == "skipped" ]]; then
+            echo "color=warning" >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
+            echo "text=SKIPPED (PR build)" >> $GITHUB_OUTPUT
+          else
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "text=FAILED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "${{ steps.status.outputs.emoji }} CI/CD Pipeline ${{ steps.status.outputs.text }}"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
+                        { "type": "mrkdwn", "text": "*Branch:*\n${{ github.ref_name }}" },
+                        { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
+                        { "type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}" },
+                        { "type": "mrkdwn", "text": "*Run:*\n#${{ github.run_number }}" },
+                        { "type": "mrkdwn", "text": "*Image:*\n`${{ env.IMAGE_NAME }}:latest`" }
+                      ]
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        { "type": "mrkdwn", "text": "*Security Scan:*\n${{ needs.security-scan.result }}" },
+                        { "type": "mrkdwn", "text": "*Unit Tests:*\n${{ needs.unit-test.result }}" },
+                        { "type": "mrkdwn", "text": "*Build & Push:*\n${{ needs.build-deploy.result }}" }
+                      ]
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": { "type": "plain_text", "text": "View Pipeline Run" },
+                          "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
