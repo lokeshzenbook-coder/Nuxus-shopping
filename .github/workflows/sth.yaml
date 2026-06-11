@@ -1,4 +1,4 @@
-name: Node.js CI/CD Pipelines
+name: Node.js CI/CD Pipeline
 
 on:
   push:
@@ -130,7 +130,7 @@ jobs:
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────
-  # JOB 4: Trivy FS Scan (pre-build, on source)
+  # JOB 4: Trivy Filesystem Scan (pre-build)
   # ──────────────────────────────────────────────
   trivy-fs-scan:
     name: Trivy Filesystem Scan
@@ -161,7 +161,7 @@ jobs:
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────
-  # JOB 5: Build, Scan Image & Push to Docker Hub
+  # JOB 5: Build, Scan & Push to Docker Hub
   # ──────────────────────────────────────────────
   build-deploy:
     name: Build, Scan & Push
@@ -185,45 +185,57 @@ jobs:
 
       - name: Build Application
         run: npm run build --if-present
-     
+
+      # FIX 6: Buildx required for build-push-action
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # FIX 8: Consistent secret names — DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker Image
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+      # FIX 4: Restored meta step — required for tags/labels/digest output
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=true
+            type=raw,value=build-${{ github.run_number }}
 
-          docker build -t $IMAGE_NAME:latest .
-          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+      # FIX 1: Single build+push — removed double docker build
+      # FIX 3: IMAGE_NAME comes from env: block — no shell scope issue
+      # FIX 7: build-args passed correctly
+      - name: Build and Push Docker Image
+        id: build-push                             # FIX 5: id added for digest output
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            CURL_VERSION=8.11.1-r0
+            BASH_VERSION=5.2.26-r0
+            GIT_VERSION=2.47.2-r0
 
-      - name: Scan Docker Image
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-
-          trivy image \
-          --severity HIGH,CRITICAL \
-          --exit-code 0 \
-          $IMAGE_NAME:$IMAGE_TAG
-
-      - name: Push Docker Images
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-
-          docker push $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:$IMAGE_TAG
-
+      # FIX 4 + 5: meta and build-push ids now exist — outputs resolve correctly
       - name: Print Image Digest
         run: |
           echo "================================================"
           echo "Image pushed successfully to Docker Hub"
-          echo "Tags : ${{ steps.meta.outputs.tags }}"
+          echo "Tags  : ${{ steps.meta.outputs.tags }}"
           echo "Digest: ${{ steps.build-push.outputs.digest }}"
           echo "================================================"
 
-      # ── Trivy Image Scan (scans from registry) ─
+      # FIX 2: Trivy image scan via action — no raw CLI needed
       - name: Run Trivy Image Scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -231,7 +243,7 @@ jobs:
           format: sarif
           output: trivy-image.sarif
           severity: CRITICAL,HIGH
-          exit-code: "0"           # report only — image already pushed
+          exit-code: "0"
           ignore-unfixed: true
 
       - name: Upload Trivy Image Report
@@ -317,97 +329,4 @@ jobs:
             Actor     : ${{ github.actor }}
             Run       : #${{ github.run_number }}
 
-            ── Job Results ──────────────────────
-            Security Scan  : ${{ needs.security-scan.result }}
-            Unit Tests     : ${{ needs.unit-test.result }}
-            Trivy FS Scan  : ${{ needs.trivy-fs-scan.result }}
-            Build & Push   : ${{ needs.build-deploy.result }}
-
-            ── Docker Image ─────────────────────
-            Image : ${{ env.IMAGE_NAME }}:latest
-            Build : ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
-
-            View Run:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-            All scan reports attached as all-reports.zip
-          attachments: all-reports.zip
-
-  # ──────────────────────────────────────────────
-  # JOB 7: Slack Notification
-  # ──────────────────────────────────────────────
-  notify-slack:
-    name: Slack Notification
-    runs-on: ubuntu-latest
-    needs: [security-scan, unit-test, trivy-fs-scan, build-deploy]
-    if: always()
-    timeout-minutes: 5
-
-    steps:
-      - name: Set Pipeline Status
-        id: status
-        run: |
-          if [[ "${{ needs.build-deploy.result }}" == "success" ]]; then
-            echo "color=good" >> $GITHUB_OUTPUT
-            echo "header=CI/CD Pipeline PASSED" >> $GITHUB_OUTPUT
-          elif [[ "${{ needs.build-deploy.result }}" == "skipped" ]]; then
-            echo "color=warning" >> $GITHUB_OUTPUT
-            echo "header=CI/CD Pipeline SKIPPED (PR build)" >> $GITHUB_OUTPUT
-          else
-            echo "color=danger" >> $GITHUB_OUTPUT
-            echo "header=CI/CD Pipeline FAILED" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send Slack Notification
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "attachments": [
-                {
-                  "color": "${{ steps.status.outputs.color }}",
-                  "blocks": [
-                    {
-                      "type": "header",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "${{ steps.status.outputs.header }}"
-                      }
-                    },
-                    {
-                      "type": "section",
-                      "fields": [
-                        { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
-                        { "type": "mrkdwn", "text": "*Branch:*\n${{ github.ref_name }}" },
-                        { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
-                        { "type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}" },
-                        { "type": "mrkdwn", "text": "*Run:*\n#${{ github.run_number }}" },
-                        { "type": "mrkdwn", "text": "*Image:*\n`${{ env.IMAGE_NAME }}:latest`" }
-                      ]
-                    },
-                    {
-                      "type": "section",
-                      "fields": [
-                        { "type": "mrkdwn", "text": "*Security Scan:*\n${{ needs.security-scan.result }}" },
-                        { "type": "mrkdwn", "text": "*Unit Tests:*\n${{ needs.unit-test.result }}" },
-                        { "type": "mrkdwn", "text": "*Trivy FS Scan:*\n${{ needs.trivy-fs-scan.result }}" },
-                        { "type": "mrkdwn", "text": "*Build & Push:*\n${{ needs.build-deploy.result }}" }
-                      ]
-                    },
-                    {
-                      "type": "actions",
-                      "elements": [
-                        {
-                          "type": "button",
-                          "text": { "type": "plain_text", "text": "View Pipeline Run" },
-                          "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+            ── Job Results ─
