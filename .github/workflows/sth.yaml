@@ -84,7 +84,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "20"          # FIX 2: consistent node version
           cache: npm
 
       - name: Install Dependencies
@@ -142,6 +142,7 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      # FIX 5+6: Use official action — no manual wget install needed
       - name: Run Trivy Filesystem Scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -156,7 +157,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-fs-report
+          name: trivy-fs-report          # FIX 15: consistent artifact name
           path: trivy-fs.sarif
           if-no-files-found: ignore
 
@@ -164,48 +165,38 @@ jobs:
   # JOB 5: Build & Push to Docker Hub
   # ──────────────────────────────────────────────
   build-deploy:
-    name: Build Scan and Push
+    name: Build, Scan & Push
     runs-on: ubuntu-latest
-    needs: unit-test
+    needs: trivy-fs-scan                 # FIX 1: depends on fs scan, not unit-test
+    timeout-minutes: 30                  # FIX 3: prevent runaway job
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # FIX 4: main branch only
 
     steps:
-      - name: Checkout source
+      - name: Checkout Source
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: "20"             # FIX 2: consistent node version
           cache: npm
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm ci
 
       - name: Build Application
         run: npm run build --if-present
 
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
-          wget -qO- https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+      # FIX 12: Buildx required for build-push-action and GHA layer cache
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Run Trivy Filesystem Scan
-        run: |
-          trivy fs . --severity HIGH,CRITICAL \
-          --format table > trivy-report.txt
-
-      - name: Upload Trivy Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-report
-          path: trivy-report.txt
-
+      # FIX 10: Consistent secret names across entire pipeline
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker Image
         run: |
@@ -229,6 +220,39 @@ jobs:
 
           docker push $IMAGE_NAME:latest
           docker push $IMAGE_NAME:$IMAGE_TAG
+
+
+      # FIX 14: Print digest and all tags after push
+      - name: Print Image Tags and Digest
+        run: |
+          echo "========================================"
+          echo "  Image pushed to Docker Hub"
+          echo "========================================"
+          echo "  Repository : ${{ env.IMAGE_NAME }}"
+          echo "  Tags       :"
+          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/    - /'
+          echo "  Digest     : ${{ steps.build-push.outputs.digest }}"
+          echo "========================================"
+
+      # FIX 13: Scan pushed image from registry after push
+      # exit-code 0 = report CVEs, do not fail (image already live)
+      - name: Run Trivy Image Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:latest
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Upload Trivy Image Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report       # FIX 15: matches notify-email download name
+          path: trivy-image.sarif
+          if-no-files-found: ignore
 
   # ──────────────────────────────────────────────
   # JOB 6: Collect All Reports & Send Gmail
@@ -258,14 +282,14 @@ jobs:
       - name: Download Trivy Image Report
         uses: actions/download-artifact@v4
         with:
-          name: trivy-image-report
+          name: trivy-image-report       # FIX 15: matches upload name
           path: reports/trivy-image
         continue-on-error: true
 
       - name: Download Trivy FS Report
         uses: actions/download-artifact@v4
         with:
-          name: trivy-fs-report
+          name: trivy-fs-report          # FIX 15: matches upload name
           path: reports/trivy-fs
         continue-on-error: true
 
