@@ -1,14 +1,15 @@
-# ✅ DL3006 fix: pinned version + digest for full reproducibility
 FROM node:20-alpine3.19
 
 WORKDIR /app
 
-# Copy dependency manifests first (layer cache optimisation)
 COPY package*.json ./
 
-# ✅ DL3059 fix: consolidated into a single RUN
+# ✅ All apk packages pinned to exact versions
 RUN apk update && \
-    apk add --no-cache curl && \
+    apk add --no-cache \
+        curl=8.5.0-r0 \
+        bash=5.2.21-r0 \
+        git=2.43.0-r0 && \
     npm ci --only=production && \
     npm cache clean --force
 
@@ -18,7 +19,6 @@ RUN npm run build --if-present
 
 EXPOSE 3000
 
-# Use non-root user (security best practice)
 USER node
 
 CMD ["node", "dist/main.js"]
