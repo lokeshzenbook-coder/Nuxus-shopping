@@ -174,20 +174,22 @@ jobs:
             type=raw,value=latest,enable=true
             type=raw,value=build-${{ github.run_number }}
 
-      # FIX 6: Build once, load locally for scanning
       - name: Build Docker Image (local load)
         uses: docker/build-push-action@v5
         with:
           context: .
           push: false
           load: true
-          # FIX 5: tag with a fixed scannable name, not just meta tags
           tags: |
             ${{ env.IMAGE_NAME }}:scan-${{ github.run_number }}
             ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            CURL_VERSION=8.11.1-r0
+            BASH_VERSION=5.2.26-r0
+            GIT_VERSION=2.47.2-r0
 
       # FIX 5: Use the fixed scan tag — not :latest which may not exist yet
       - name: Run Trivy Image Scan
