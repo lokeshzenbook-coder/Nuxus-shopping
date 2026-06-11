@@ -1,422 +1,422 @@
-name: Node.js CI/CD Pipeline
+# name: Node.js CI/CD Pipeline
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:
+# on:
+#   push:
+#     branches:
+#       - main
+#   pull_request:
+#     branches:
+#       - main
+#   workflow_dispatch:
 
-permissions:
-  contents: read
-  security-events: write
+# permissions:
+#   contents: read
+#   security-events: write
 
-env:
-  IMAGE_NAME: lokeshzenbook/node-app69
+# env:
+#   IMAGE_NAME: lokeshzenbook/node-app69
 
-jobs:
-  # ──────────────────────────────────────────────
-  # JOB 1: Security Scan
-  # ──────────────────────────────────────────────
-  security-scan:
-    name: Secrets, SAST & Dockerfile Scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+# jobs:
+#   # ──────────────────────────────────────────────
+#   # JOB 1: Security Scan
+#   # ──────────────────────────────────────────────
+#   security-scan:
+#     name: Secrets, SAST & Dockerfile Scan
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 15
 
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+#     steps:
+#       - name: Checkout Source
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
 
-      - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          extra_args: --only-verified
+#       - name: TruffleHog Secret Scan
+#         uses: trufflesecurity/trufflehog@main
+#         with:
+#           path: ./
+#           extra_args: --only-verified
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+#       - name: Setup Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
 
-      - name: Install Semgrep
-        run: |
-          python -m pip install --upgrade pip
-          pip install semgrep
+#       - name: Install Semgrep
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install semgrep
 
-      - name: Run Semgrep Scan
-        run: |
-          semgrep scan \
-            --config=auto \
-            --sarif \
-            --output semgrep.sarif
+#       - name: Run Semgrep Scan
+#         run: |
+#           semgrep scan \
+#             --config=auto \
+#             --sarif \
+#             --output semgrep.sarif
 
-      - name: Upload Semgrep Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: semgrep-report
-          path: semgrep.sarif
-          if-no-files-found: ignore
-
-
-
-  # ──────────────────────────────────────────────
-  # JOB 2: Lint
-  # ──────────────────────────────────────────────
-  lint:
-    name: Lint Check
-    runs-on: ubuntu-latest
-    needs: security-scan
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"          # FIX 2: consistent node version
-          cache: npm
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Run ESLint
-        run: npm run lint --if-present
-
-  # ──────────────────────────────────────────────
-  # JOB 3: Unit Tests
-  # ──────────────────────────────────────────────
-  unit-test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    needs: lint
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Run Unit Tests
-        run: npm run test:unit --if-present
-
-      - name: Generate Coverage
-        run: npm run test:coverage --if-present
-
-      - name: Upload Coverage Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          if-no-files-found: ignore
-
-  # ──────────────────────────────────────────────
-  # JOB 4: Trivy Filesystem Scan (pre-build)
-  # ──────────────────────────────────────────────
-  trivy-fs-scan:
-    name: Trivy Filesystem Scan
-    runs-on: ubuntu-latest
-    needs: unit-test
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-
-      # FIX 5+6: Use official action — no manual wget install needed
-      - name: Run Trivy Filesystem Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-fs.sarif
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-
-      - name: Upload Trivy FS Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-fs-report          # FIX 15: consistent artifact name
-          path: trivy-fs.sarif
-          if-no-files-found: ignore
-
-  # ──────────────────────────────────────────────
-  # JOB 5: Build & Push to Docker Hub
-  # ──────────────────────────────────────────────
-  build-deploy:
-    name: Build, Scan & Push
-    runs-on: ubuntu-latest
-    needs: trivy-fs-scan                 # FIX 1: depends on fs scan, not unit-test
-    timeout-minutes: 30                  # FIX 3: prevent runaway job
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # FIX 4: main branch only
-
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"             # FIX 2: consistent node version
-          cache: npm
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Build Application
-        run: npm run build --if-present
-
-      # FIX 12: Buildx required for build-push-action and GHA layer cache
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # FIX 10: Consistent secret names across entire pipeline
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build Docker Image
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-
-          docker build -t $IMAGE_NAME:latest .
-          docker build -t $IMAGE_NAME:$IMAGE_TAG .
-
-      - name: Scan Docker Image
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-
-          trivy image \
-          --severity HIGH,CRITICAL \
-          --exit-code 0 \
-          $IMAGE_NAME:$IMAGE_TAG
-
-      - name: Push Docker Images
-        run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-
-          docker push $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:$IMAGE_TAG
+#       - name: Upload Semgrep Report
+#         if: always()
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: semgrep-report
+#           path: semgrep.sarif
+#           if-no-files-found: ignore
 
 
-      # FIX 14: Print digest and all tags after push
-      - name: Print Image Tags and Digest
-        run: |
-          echo "========================================"
-          echo "  Image pushed to Docker Hub"
-          echo "========================================"
-          echo "  Repository : ${{ env.IMAGE_NAME }}"
-          echo "  Tags       :"
-          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/    - /'
-          echo "  Digest     : ${{ steps.build-push.outputs.digest }}"
-          echo "========================================"
 
-      # FIX 13: Scan pushed image from registry after push
-      # exit-code 0 = report CVEs, do not fail (image already live)
-      - name: Run Trivy Image Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:latest
-          format: sarif
-          output: trivy-image.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "0"
-          ignore-unfixed: true
+#   # ──────────────────────────────────────────────
+#   # JOB 2: Lint
+#   # ──────────────────────────────────────────────
+#   lint:
+#     name: Lint Check
+#     runs-on: ubuntu-latest
+#     needs: security-scan
+#     timeout-minutes: 10
 
-      - name: Upload Trivy Image Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-image-report       # FIX 15: matches notify-email download name
-          path: trivy-image.sarif
-          if-no-files-found: ignore
+#     steps:
+#       - name: Checkout Source
+#         uses: actions/checkout@v4
 
-  # ──────────────────────────────────────────────
-  # JOB 6: Collect All Reports & Send Gmail
-  # ──────────────────────────────────────────────
-  notify-email:
-    name: Email Reports
-    runs-on: ubuntu-latest
-    needs: [security-scan, unit-test, trivy-fs-scan, build-deploy]
-    if: always()
-    timeout-minutes: 10
+#       - name: Setup Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: "20"          # FIX 2: consistent node version
+#           cache: npm
 
-    steps:
-      - name: Download Semgrep Report
-        uses: actions/download-artifact@v4
-        with:
-          name: semgrep-report
-          path: reports/semgrep
-        continue-on-error: true
+#       - name: Install Dependencies
+#         run: npm ci
 
-      - name: Download Coverage Report
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-report
-          path: reports/coverage
-        continue-on-error: true
+#       - name: Run ESLint
+#         run: npm run lint --if-present
 
-      - name: Download Trivy Image Report
-        uses: actions/download-artifact@v4
-        with:
-          name: trivy-image-report       # FIX 15: matches upload name
-          path: reports/trivy-image
-        continue-on-error: true
+#   # ──────────────────────────────────────────────
+#   # JOB 3: Unit Tests
+#   # ──────────────────────────────────────────────
+#   unit-test:
+#     name: Unit Tests
+#     runs-on: ubuntu-latest
+#     needs: lint
+#     timeout-minutes: 15
 
-      - name: Download Trivy FS Report
-        uses: actions/download-artifact@v4
-        with:
-          name: trivy-fs-report          # FIX 15: matches upload name
-          path: reports/trivy-fs
-        continue-on-error: true
+#     steps:
+#       - name: Checkout Source
+#         uses: actions/checkout@v4
 
-      - name: Zip All Reports
-        run: |
-          if [ -d "reports" ] && [ "$(ls -A reports)" ]; then
-            cd reports
-            zip -r ../all-reports.zip .
-            cd ..
-            echo "Zip created successfully"
-            ls -lh all-reports.zip
-          else
-            echo "No reports found, creating placeholder"
-            echo "No reports generated in this run" > no-reports.txt
-            zip all-reports.zip no-reports.txt
-          fi
+#       - name: Setup Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: "20"
+#           cache: npm
 
-      - name: Send Email with Reports
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.GMAIL_USERNAME }}
-          password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          to: lokeshnaidu6868@gmail.com
-          from: GitHub Actions <${{ secrets.GMAIL_USERNAME }}>
-          ignore_cert: true
-          subject: >
-            [${{ needs.build-deploy.result == 'success' && 'PASSED' || 'FAILED' }}]
-            CI/CD Pipeline - ${{ github.repository }} #${{ github.run_number }}
-          body: |
-            Pipeline  : ${{ github.workflow }}
-            Repository: ${{ github.repository }}
-            Branch    : ${{ github.ref_name }}
-            Commit    : ${{ github.sha }}
-            Actor     : ${{ github.actor }}
-            Run       : #${{ github.run_number }}
+#       - name: Install Dependencies
+#         run: npm ci
 
-            ── Job Results ──────────────────────
-            Security Scan  : ${{ needs.security-scan.result }}
-            Unit Tests     : ${{ needs.unit-test.result }}
-            Trivy FS Scan  : ${{ needs.trivy-fs-scan.result }}
-            Build & Push   : ${{ needs.build-deploy.result }}
+#       - name: Run Unit Tests
+#         run: npm run test:unit --if-present
 
-            ── Docker Image ─────────────────────
-            Image  : ${{ env.IMAGE_NAME }}:latest
-            Build  : ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
-            Hub    : https://hub.docker.com/r/${{ env.IMAGE_NAME }}/tags
+#       - name: Generate Coverage
+#         run: npm run test:coverage --if-present
 
-            View Run:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+#       - name: Upload Coverage Report
+#         if: always()
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: coverage-report
+#           path: coverage/
+#           if-no-files-found: ignore
 
-            All scan reports attached as all-reports.zip
-          attachments: all-reports.zip
+#   # ──────────────────────────────────────────────
+#   # JOB 4: Trivy Filesystem Scan (pre-build)
+#   # ──────────────────────────────────────────────
+#   trivy-fs-scan:
+#     name: Trivy Filesystem Scan
+#     runs-on: ubuntu-latest
+#     needs: unit-test
+#     timeout-minutes: 15
 
-  # ──────────────────────────────────────────────
-  # JOB 7: Slack Notification
-  # ──────────────────────────────────────────────
-  notify-slack:
-    name: Slack Notification
-    runs-on: ubuntu-latest
-    needs: [security-scan, unit-test, trivy-fs-scan, build-deploy]
-    if: always()
-    timeout-minutes: 5
+#     steps:
+#       - name: Checkout Source
+#         uses: actions/checkout@v4
 
-    steps:
-      - name: Set Pipeline Status
-        id: status
-        run: |
-          if [[ "${{ needs.build-deploy.result }}" == "success" ]]; then
-            echo "color=good" >> $GITHUB_OUTPUT
-            echo "header=CI/CD Pipeline PASSED" >> $GITHUB_OUTPUT
-          elif [[ "${{ needs.build-deploy.result }}" == "skipped" ]]; then
-            echo "color=warning" >> $GITHUB_OUTPUT
-            echo "header=CI/CD Pipeline SKIPPED (PR build)" >> $GITHUB_OUTPUT
-          else
-            echo "color=danger" >> $GITHUB_OUTPUT
-            echo "header=CI/CD Pipeline FAILED" >> $GITHUB_OUTPUT
-          fi
+#       # FIX 5+6: Use official action — no manual wget install needed
+#       - name: Run Trivy Filesystem Scan
+#         uses: aquasecurity/trivy-action@master
+#         with:
+#           scan-type: fs
+#           scan-ref: .
+#           format: sarif
+#           output: trivy-fs.sarif
+#           severity: CRITICAL,HIGH
+#           ignore-unfixed: true
 
-      - name: Send Slack Notification
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          payload: |
-            {
-              "attachments": [
-                {
-                  "color": "${{ steps.status.outputs.color }}",
-                  "blocks": [
-                    {
-                      "type": "header",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "${{ steps.status.outputs.header }}"
-                      }
-                    },
-                    {
-                      "type": "section",
-                      "fields": [
-                        { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
-                        { "type": "mrkdwn", "text": "*Branch:*\n${{ github.ref_name }}" },
-                        { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
-                        { "type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}" },
-                        { "type": "mrkdwn", "text": "*Run:*\n#${{ github.run_number }}" },
-                        { "type": "mrkdwn", "text": "*Image:*\n`${{ env.IMAGE_NAME }}:latest`" }
-                      ]
-                    },
-                    {
-                      "type": "section",
-                      "fields": [
-                        { "type": "mrkdwn", "text": "*Security Scan:*\n${{ needs.security-scan.result }}" },
-                        { "type": "mrkdwn", "text": "*Unit Tests:*\n${{ needs.unit-test.result }}" },
-                        { "type": "mrkdwn", "text": "*Trivy FS Scan:*\n${{ needs.trivy-fs-scan.result }}" },
-                        { "type": "mrkdwn", "text": "*Build & Push:*\n${{ needs.build-deploy.result }}" }
-                      ]
-                    },
-                    {
-                      "type": "actions",
-                      "elements": [
-                        {
-                          "type": "button",
-                          "text": { "type": "plain_text", "text": "View Pipeline Run" },
-                          "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+#       - name: Upload Trivy FS Report
+#         if: always()
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: trivy-fs-report          # FIX 15: consistent artifact name
+#           path: trivy-fs.sarif
+#           if-no-files-found: ignore
+
+#   # ──────────────────────────────────────────────
+#   # JOB 5: Build & Push to Docker Hub
+#   # ──────────────────────────────────────────────
+#   build-deploy:
+#     name: Build, Scan & Push
+#     runs-on: ubuntu-latest
+#     needs: trivy-fs-scan                 # FIX 1: depends on fs scan, not unit-test
+#     timeout-minutes: 30                  # FIX 3: prevent runaway job
+#     if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # FIX 4: main branch only
+
+#     steps:
+#       - name: Checkout Source
+#         uses: actions/checkout@v4
+
+#       - name: Setup Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: "20"             # FIX 2: consistent node version
+#           cache: npm
+
+#       - name: Install Dependencies
+#         run: npm ci
+
+#       - name: Build Application
+#         run: npm run build --if-present
+
+#       # FIX 12: Buildx required for build-push-action and GHA layer cache
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       # FIX 10: Consistent secret names across entire pipeline
+#       - name: Login to Docker Hub
+#         uses: docker/login-action@v3
+#         with:
+#           username: ${{ secrets.DOCKERHUB_USERNAME }}
+#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+#       - name: Build Docker Image
+#         run: |
+#           IMAGE_TAG=${GITHUB_SHA::7}
+
+#           docker build -t $IMAGE_NAME:latest .
+#           docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+#       - name: Scan Docker Image
+#         run: |
+#           IMAGE_TAG=${GITHUB_SHA::7}
+
+#           trivy image \
+#           --severity HIGH,CRITICAL \
+#           --exit-code 0 \
+#           $IMAGE_NAME:$IMAGE_TAG
+
+#       - name: Push Docker Images
+#         run: |
+#           IMAGE_TAG=${GITHUB_SHA::7}
+
+#           docker push $IMAGE_NAME:latest
+#           docker push $IMAGE_NAME:$IMAGE_TAG
+
+
+#       # FIX 14: Print digest and all tags after push
+#       - name: Print Image Tags and Digest
+#         run: |
+#           echo "========================================"
+#           echo "  Image pushed to Docker Hub"
+#           echo "========================================"
+#           echo "  Repository : ${{ env.IMAGE_NAME }}"
+#           echo "  Tags       :"
+#           echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' | sed 's/^/    - /'
+#           echo "  Digest     : ${{ steps.build-push.outputs.digest }}"
+#           echo "========================================"
+
+#       # FIX 13: Scan pushed image from registry after push
+#       # exit-code 0 = report CVEs, do not fail (image already live)
+#       - name: Run Trivy Image Scan
+#         uses: aquasecurity/trivy-action@master
+#         with:
+#           image-ref: ${{ env.IMAGE_NAME }}:latest
+#           format: sarif
+#           output: trivy-image.sarif
+#           severity: CRITICAL,HIGH
+#           exit-code: "0"
+#           ignore-unfixed: true
+
+#       - name: Upload Trivy Image Report
+#         if: always()
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: trivy-image-report       # FIX 15: matches notify-email download name
+#           path: trivy-image.sarif
+#           if-no-files-found: ignore
+
+#   # ──────────────────────────────────────────────
+#   # JOB 6: Collect All Reports & Send Gmail
+#   # ──────────────────────────────────────────────
+#   notify-email:
+#     name: Email Reports
+#     runs-on: ubuntu-latest
+#     needs: [security-scan, unit-test, trivy-fs-scan, build-deploy]
+#     if: always()
+#     timeout-minutes: 10
+
+#     steps:
+#       - name: Download Semgrep Report
+#         uses: actions/download-artifact@v4
+#         with:
+#           name: semgrep-report
+#           path: reports/semgrep
+#         continue-on-error: true
+
+#       - name: Download Coverage Report
+#         uses: actions/download-artifact@v4
+#         with:
+#           name: coverage-report
+#           path: reports/coverage
+#         continue-on-error: true
+
+#       - name: Download Trivy Image Report
+#         uses: actions/download-artifact@v4
+#         with:
+#           name: trivy-image-report       # FIX 15: matches upload name
+#           path: reports/trivy-image
+#         continue-on-error: true
+
+#       - name: Download Trivy FS Report
+#         uses: actions/download-artifact@v4
+#         with:
+#           name: trivy-fs-report          # FIX 15: matches upload name
+#           path: reports/trivy-fs
+#         continue-on-error: true
+
+#       - name: Zip All Reports
+#         run: |
+#           if [ -d "reports" ] && [ "$(ls -A reports)" ]; then
+#             cd reports
+#             zip -r ../all-reports.zip .
+#             cd ..
+#             echo "Zip created successfully"
+#             ls -lh all-reports.zip
+#           else
+#             echo "No reports found, creating placeholder"
+#             echo "No reports generated in this run" > no-reports.txt
+#             zip all-reports.zip no-reports.txt
+#           fi
+
+#       - name: Send Email with Reports
+#         uses: dawidd6/action-send-mail@v3
+#         with:
+#           server_address: smtp.gmail.com
+#           server_port: 465
+#           secure: true
+#           username: ${{ secrets.GMAIL_USERNAME }}
+#           password: ${{ secrets.GMAIL_APP_PASSWORD }}
+#           to: lokeshnaidu6868@gmail.com
+#           from: GitHub Actions <${{ secrets.GMAIL_USERNAME }}>
+#           ignore_cert: true
+#           subject: >
+#             [${{ needs.build-deploy.result == 'success' && 'PASSED' || 'FAILED' }}]
+#             CI/CD Pipeline - ${{ github.repository }} #${{ github.run_number }}
+#           body: |
+#             Pipeline  : ${{ github.workflow }}
+#             Repository: ${{ github.repository }}
+#             Branch    : ${{ github.ref_name }}
+#             Commit    : ${{ github.sha }}
+#             Actor     : ${{ github.actor }}
+#             Run       : #${{ github.run_number }}
+
+#             ── Job Results ──────────────────────
+#             Security Scan  : ${{ needs.security-scan.result }}
+#             Unit Tests     : ${{ needs.unit-test.result }}
+#             Trivy FS Scan  : ${{ needs.trivy-fs-scan.result }}
+#             Build & Push   : ${{ needs.build-deploy.result }}
+
+#             ── Docker Image ─────────────────────
+#             Image  : ${{ env.IMAGE_NAME }}:latest
+#             Build  : ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
+#             Hub    : https://hub.docker.com/r/${{ env.IMAGE_NAME }}/tags
+
+#             View Run:
+#             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+#             All scan reports attached as all-reports.zip
+#           attachments: all-reports.zip
+
+#   # ──────────────────────────────────────────────
+#   # JOB 7: Slack Notification
+#   # ──────────────────────────────────────────────
+#   notify-slack:
+#     name: Slack Notification
+#     runs-on: ubuntu-latest
+#     needs: [security-scan, unit-test, trivy-fs-scan, build-deploy]
+#     if: always()
+#     timeout-minutes: 5
+
+#     steps:
+#       - name: Set Pipeline Status
+#         id: status
+#         run: |
+#           if [[ "${{ needs.build-deploy.result }}" == "success" ]]; then
+#             echo "color=good" >> $GITHUB_OUTPUT
+#             echo "header=CI/CD Pipeline PASSED" >> $GITHUB_OUTPUT
+#           elif [[ "${{ needs.build-deploy.result }}" == "skipped" ]]; then
+#             echo "color=warning" >> $GITHUB_OUTPUT
+#             echo "header=CI/CD Pipeline SKIPPED (PR build)" >> $GITHUB_OUTPUT
+#           else
+#             echo "color=danger" >> $GITHUB_OUTPUT
+#             echo "header=CI/CD Pipeline FAILED" >> $GITHUB_OUTPUT
+#           fi
+
+#       - name: Send Slack Notification
+#         uses: slackapi/slack-github-action@v1.26.0
+#         with:
+#           payload: |
+#             {
+#               "attachments": [
+#                 {
+#                   "color": "${{ steps.status.outputs.color }}",
+#                   "blocks": [
+#                     {
+#                       "type": "header",
+#                       "text": {
+#                         "type": "plain_text",
+#                         "text": "${{ steps.status.outputs.header }}"
+#                       }
+#                     },
+#                     {
+#                       "type": "section",
+#                       "fields": [
+#                         { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
+#                         { "type": "mrkdwn", "text": "*Branch:*\n${{ github.ref_name }}" },
+#                         { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
+#                         { "type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}" },
+#                         { "type": "mrkdwn", "text": "*Run:*\n#${{ github.run_number }}" },
+#                         { "type": "mrkdwn", "text": "*Image:*\n`${{ env.IMAGE_NAME }}:latest`" }
+#                       ]
+#                     },
+#                     {
+#                       "type": "section",
+#                       "fields": [
+#                         { "type": "mrkdwn", "text": "*Security Scan:*\n${{ needs.security-scan.result }}" },
+#                         { "type": "mrkdwn", "text": "*Unit Tests:*\n${{ needs.unit-test.result }}" },
+#                         { "type": "mrkdwn", "text": "*Trivy FS Scan:*\n${{ needs.trivy-fs-scan.result }}" },
+#                         { "type": "mrkdwn", "text": "*Build & Push:*\n${{ needs.build-deploy.result }}" }
+#                       ]
+#                     },
+#                     {
+#                       "type": "actions",
+#                       "elements": [
+#                         {
+#                           "type": "button",
+#                           "text": { "type": "plain_text", "text": "View Pipeline Run" },
+#                           "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+#                         }
+#                       ]
+#                     }
+#                   ]
+#                 }
+#               ]
+#             }
+#         env:
+#           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+#           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
