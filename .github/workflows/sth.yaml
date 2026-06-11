@@ -329,4 +329,97 @@ jobs:
             Actor     : ${{ github.actor }}
             Run       : #${{ github.run_number }}
 
-            ── Job Results ─
+            ── Job Results ──────────────────────
+            Security Scan  : ${{ needs.security-scan.result }}
+            Unit Tests     : ${{ needs.unit-test.result }}
+            Trivy FS Scan  : ${{ needs.trivy-fs-scan.result }}
+            Build & Push   : ${{ needs.build-deploy.result }}
+
+            ── Docker Image ─────────────────────
+            Image : ${{ env.IMAGE_NAME }}:latest
+            Build : ${{ env.IMAGE_NAME }}:build-${{ github.run_number }}
+
+            View Run:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            All scan reports attached as all-reports.zip
+          attachments: all-reports.zip
+
+  # ──────────────────────────────────────────────
+  # JOB 7: Slack Notification
+  # ──────────────────────────────────────────────
+  notify-slack:
+    name: Slack Notification
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-test, trivy-fs-scan, build-deploy]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Set Pipeline Status
+        id: status
+        run: |
+          if [[ "${{ needs.build-deploy.result }}" == "success" ]]; then
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "header=CI/CD Pipeline PASSED" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.build-deploy.result }}" == "skipped" ]]; then
+            echo "color=warning" >> $GITHUB_OUTPUT
+            echo "header=CI/CD Pipeline SKIPPED (PR build)" >> $GITHUB_OUTPUT
+          else
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "header=CI/CD Pipeline FAILED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "${{ steps.status.outputs.header }}"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        { "type": "mrkdwn", "text": "*Repo:*\n${{ github.repository }}" },
+                        { "type": "mrkdwn", "text": "*Branch:*\n${{ github.ref_name }}" },
+                        { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
+                        { "type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}" },
+                        { "type": "mrkdwn", "text": "*Run:*\n#${{ github.run_number }}" },
+                        { "type": "mrkdwn", "text": "*Image:*\n`${{ env.IMAGE_NAME }}:latest`" }
+                      ]
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        { "type": "mrkdwn", "text": "*Security Scan:*\n${{ needs.security-scan.result }}" },
+                        { "type": "mrkdwn", "text": "*Unit Tests:*\n${{ needs.unit-test.result }}" },
+                        { "type": "mrkdwn", "text": "*Trivy FS Scan:*\n${{ needs.trivy-fs-scan.result }}" },
+                        { "type": "mrkdwn", "text": "*Build & Push:*\n${{ needs.build-deploy.result }}" }
+                      ]
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": { "type": "plain_text", "text": "View Pipeline Run" },
+                          "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
