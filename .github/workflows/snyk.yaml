@@ -7,6 +7,17 @@ on:
   pull_request:
     branches: ["main"]
 
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What do you want to do?"
+        required: true
+        default: "scan-only"
+        type: choice
+        options:
+          - scan-only
+          - deploy
+
 permissions:
   id-token: write
   contents: read
