@@ -1,25 +1,38 @@
-
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { HashRouter, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  ShoppingBag, 
-  ShoppingCart, 
-  User as UserIcon, 
-  Search, 
-  Menu, 
-  X, 
-  LayoutDashboard, 
+import React, { useState, useEffect, useCallback } from 'react';
+import { HashRouter, Routes, Route, Link, useLocation, useSearchParams } from 'react-router-dom';
+import {
+  ShoppingBag,
+  ShoppingCart,
+  User as UserIcon,
+  Search,
+  Menu,
+  X,
   Bot,
   ArrowRight,
   PlusCircle,
   Package,
   CheckCircle,
   CreditCard,
-  Trash2
+  Trash2,
+  Star,
+  Sparkles,
+  ShieldCheck,
+  Truck,
+  Zap,
+  Flame,
+  Send,
+  Wallet,
+  Boxes,
+  Timer,
+  Globe,
+  Mail,
+  MessageCircle,
+  Rss,
+  type LucideIcon,
 } from 'lucide-react';
 
 import { Product, Category, User, CartItem, Order, ChatMessage } from './types';
-import { INITIAL_PRODUCTS, CATEGORIES } from './constants';
+import { CATEGORIES } from './constants';
 import { ProductService, OrderService } from './apiService';
 import { getShoppingAdvice, generateProductDescription } from './geminiService';
 
@@ -27,90 +40,158 @@ import { getShoppingAdvice, generateProductDescription } from './geminiService';
 
 const Navbar = ({ cartCount, user }: { cartCount: number, user: User | null }) => {
   const [isOpen, setIsOpen] = useState(false);
-  
+  const location = useLocation();
+
+  const navLink = (path: string, label: string) => (
+    <Link
+      key={path}
+      to={path}
+      className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 ${
+        location.pathname === path
+          ? 'bg-gradient-to-r from-indigo-50 to-violet-50 text-indigo-600'
+          : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-100/70'
+      }`}
+    >
+      {label}
+    </Link>
+  );
+
+  const cartBadge = cartCount > 0 ? (
+    <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-gradient-to-r from-red-500 to-rose-500 px-1 text-[10px] font-bold text-white shadow-md ring-2 ring-white">
+      {cartCount}
+    </span>
+  ) : null;
+
   return (
-    <nav className="glass sticky top-0 z-50 w-full shadow-sm border-b border-slate-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16 items-center">
-          <Link to="/" className="flex items-center space-x-2">
-            <ShoppingBag className="h-8 w-8 text-indigo-600" />
-            <span className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-              NexusMarket
-            </span>
-          </Link>
-
-          {/* Desktop Nav */}
-          <div className="hidden md:flex items-center space-x-8">
-            <Link to="/shop" className="text-slate-600 hover:text-indigo-600 font-medium transition">Shop</Link>
-            {user?.role === 'seller' && (
-              <Link to="/dashboard" className="text-slate-600 hover:text-indigo-600 font-medium transition">Seller Panel</Link>
-            )}
-            <Link to="/cart" className="relative p-2 text-slate-600 hover:text-indigo-600 transition">
-              <ShoppingCart className="h-6 w-6" />
-              {cartCount > 0 && (
-                <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold rounded-full h-4 w-4 flex items-center justify-center">
-                  {cartCount}
-                </span>
-              )}
-            </Link>
-            <Link to="/profile" className="p-2 text-slate-600 hover:text-indigo-600 transition">
-              <UserIcon className="h-6 w-6" />
-            </Link>
-          </div>
-
-          <div className="md:hidden flex items-center space-x-4">
-             <Link to="/cart" className="relative p-2 text-slate-600">
-                <ShoppingCart className="h-6 w-6" />
-                {cartCount > 0 && <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">{cartCount}</span>}
-             </Link>
-             <button onClick={() => setIsOpen(!isOpen)} className="text-slate-600">
-               {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-             </button>
-          </div>
+    <div className="sticky top-0 z-50">
+      {/* Announcement bar */}
+      <div className="bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 text-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-center gap-2 px-4 py-2 text-center text-xs font-semibold tracking-wide sm:px-6 lg:px-8">
+          <Truck className="h-3.5 w-3.5 shrink-0" />
+          <span>Free shipping on orders over $50</span>
+          <span className="hidden text-white/60 sm:inline">·</span>
+          <span className="hidden text-white/80 sm:inline">Ask Nexus AI for instant recommendations</span>
         </div>
       </div>
-      
-      {/* Mobile Menu */}
-      {isOpen && (
-        <div className="md:hidden bg-white border-b border-slate-200 p-4 space-y-4 shadow-lg animate-in slide-in-from-top duration-300">
-          <Link to="/shop" onClick={() => setIsOpen(false)} className="block text-slate-600 font-medium">Shop</Link>
-          {user?.role === 'seller' && <Link to="/dashboard" onClick={() => setIsOpen(false)} className="block text-slate-600 font-medium">Seller Panel</Link>}
-          <Link to="/profile" onClick={() => setIsOpen(false)} className="block text-slate-600 font-medium">Profile</Link>
+
+      <nav className="glass border-b border-slate-200/60 shadow-[0_10px_40px_-15px_rgba(15,23,42,0.25)]">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center justify-between">
+            <Link to="/" className="group flex items-center space-x-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white shadow-lg shadow-indigo-300/60 transition-transform duration-200 group-hover:rotate-3 group-hover:scale-105">
+                <ShoppingBag className="h-5 w-5" />
+              </span>
+              <span className="font-display text-xl font-extrabold tracking-tight text-slate-900">
+                Nexus<span className="text-gradient">Market</span>
+              </span>
+            </Link>
+
+            <div className="hidden items-center space-x-2 md:flex">
+              {navLink('/shop', 'Shop')}
+              {user?.role === 'seller' && navLink('/dashboard', 'Seller Panel')}
+            </div>
+
+            <div className="hidden items-center space-x-1 md:flex">
+              <Link to="/cart" className="relative rounded-xl p-2.5 text-slate-600 transition hover:bg-slate-100/70 hover:text-indigo-600">
+                <ShoppingCart className="h-6 w-6" />
+                {cartBadge}
+              </Link>
+              <Link to="/profile" className="rounded-xl p-2.5 text-slate-600 transition hover:bg-slate-100/70 hover:text-indigo-600">
+                <UserIcon className="h-6 w-6" />
+              </Link>
+            </div>
+
+            <div className="flex items-center space-x-3 md:hidden">
+              <Link to="/cart" className="relative p-2 text-slate-600">
+                <ShoppingCart className="h-6 w-6" />
+                {cartBadge}
+              </Link>
+              <button onClick={() => setIsOpen(!isOpen)} className="rounded-lg p-2 text-slate-700 transition hover:bg-slate-100">
+                {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+              </button>
+            </div>
+          </div>
         </div>
-      )}
-    </nav>
+
+        {isOpen && (
+          <div className="animate-fade-up space-y-1 border-t border-slate-200/60 bg-white/90 px-4 py-4 shadow-lg backdrop-blur-xl md:hidden">
+            <Link to="/shop" onClick={() => setIsOpen(false)} className="block rounded-xl px-4 py-3 font-semibold text-slate-700 transition hover:bg-slate-100">
+              Shop
+            </Link>
+            {user?.role === 'seller' && (
+              <Link to="/dashboard" onClick={() => setIsOpen(false)} className="block rounded-xl px-4 py-3 font-semibold text-slate-700 transition hover:bg-slate-100">
+                Seller Panel
+              </Link>
+            )}
+            <Link to="/profile" onClick={() => setIsOpen(false)} className="block rounded-xl px-4 py-3 font-semibold text-slate-700 transition hover:bg-slate-100">
+              Profile
+            </Link>
+          </div>
+        )}
+      </nav>
+    </div>
   );
 };
 
-// Added React.FC type to ProductCard to resolve the TypeScript error regarding the 'key' prop when used in lists.
-const ProductCard: React.FC<{ product: Product, addToCart: (p: Product) => void }> = ({ product, addToCart }) => (
-  <div className="group bg-white rounded-2xl border border-slate-200 overflow-hidden hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
-    <div className="relative aspect-video overflow-hidden">
-      <img 
-        src={product.imageUrl} 
-        alt={product.name} 
-        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-      />
-      <div className="absolute top-2 right-2 px-2 py-1 bg-white/90 backdrop-blur rounded-lg text-xs font-semibold text-slate-700">
-        {product.category}
+const ProductCard: React.FC<{ product: Product, addToCart: (p: Product) => void }> = ({ product, addToCart }) => {
+  const [added, setAdded] = useState(false);
+
+  const handleAdd = () => {
+    addToCart(product);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1400);
+  };
+
+  return (
+    <div className="group card-shadow card-shadow-hover relative flex flex-col overflow-hidden rounded-3xl border border-slate-100 bg-white hover:-translate-y-1.5">
+      <div className="relative aspect-[4/3] overflow-hidden bg-slate-100">
+        <img
+          src={product.imageUrl}
+          alt={product.name}
+          loading="lazy"
+          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/30 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+        <span className="absolute left-3 top-3 rounded-full bg-white/85 px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-sm backdrop-blur">
+          {product.category}
+        </span>
+        {product.rating > 0 && (
+          <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-slate-900/70 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur">
+            <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> {product.rating.toFixed(1)}
+          </span>
+        )}
+        {product.stock < 15 && (
+          <span className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-2.5 py-1 text-[10px] font-bold text-white shadow">
+            <Flame className="h-3 w-3" /> Only {product.stock} left
+          </span>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col p-5">
+        <h3 className="font-display line-clamp-1 text-[15px] font-bold text-slate-900 transition-colors group-hover:text-indigo-600">
+          {product.name}
+        </h3>
+        <p className="mt-1 flex-1 text-sm text-slate-500 line-clamp-2">{product.description}</p>
+        <div className="mt-4 flex items-center justify-between">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Price</p>
+            <p className="font-display text-xl font-extrabold text-slate-900">${product.price.toFixed(2)}</p>
+          </div>
+          <button
+            onClick={handleAdd}
+            className={`flex items-center gap-1.5 rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 ${
+              added
+                ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-lg shadow-green-200'
+                : 'bg-gradient-to-r from-indigo-600 to-violet-600 shadow-lg shadow-indigo-200 hover:shadow-xl hover:shadow-indigo-300'
+            }`}
+          >
+            {added ? <CheckCircle className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4" />}
+            <span>{added ? 'Added' : 'Add'}</span>
+          </button>
+        </div>
       </div>
     </div>
-    <div className="p-5">
-      <h3 className="font-bold text-slate-900 mb-1 group-hover:text-indigo-600 transition-colors line-clamp-1">{product.name}</h3>
-      <p className="text-slate-500 text-sm mb-4 line-clamp-2">{product.description}</p>
-      <div className="flex items-center justify-between">
-        <span className="text-xl font-bold text-slate-900">${product.price.toFixed(2)}</span>
-        <button 
-          onClick={() => addToCart(product)}
-          className="flex items-center space-x-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl transition text-sm font-medium"
-        >
-          <ShoppingCart className="h-4 w-4" />
-          <span>Add</span>
-        </button>
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 const AIAssistant = ({ products }: { products: Product[] }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -138,51 +219,87 @@ const AIAssistant = ({ products }: { products: Product[] }) => {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50">
-      {isOpen ? (
-        <div className="w-80 md:w-96 h-[500px] glass shadow-2xl rounded-3xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-          <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
-            <div className="flex items-center space-x-2">
-              <Bot className="h-6 w-6" />
-              <span className="font-bold">Nexus AI Assistant</span>
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+      {isOpen && (
+        <div className="glass-strong animate-fade-up mb-4 flex h-[500px] w-80 flex-col overflow-hidden rounded-3xl shadow-2xl md:w-96">
+          <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 p-4 text-white">
+            <div className="flex items-center space-x-3">
+              <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
+                <Bot className="h-5 w-5" />
+                <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-green-400 ring-2 ring-indigo-600" />
+              </span>
+              <div>
+                <p className="text-sm font-bold">Nexus AI Assistant</p>
+                <p className="text-[11px] text-white/70">Online - replies instantly</p>
+              </div>
             </div>
-            <button onClick={() => setIsOpen(false)}><X className="h-5 w-5" /></button>
+            <button onClick={() => setIsOpen(false)} className="rounded-lg p-1.5 transition hover:bg-white/20">
+              <X className="h-5 w-5" />
+            </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scroll">
+
+          <div className="custom-scroll flex-1 space-y-4 overflow-y-auto p-4">
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${
-                  m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800'
+              <div key={i} className={`flex items-end gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {m.role === 'model' && (
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white">
+                    <Bot className="h-4 w-4" />
+                  </span>
+                )}
+                <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
+                  m.role === 'user'
+                    ? 'rounded-br-md bg-gradient-to-r from-indigo-600 to-violet-600 text-white'
+                    : 'rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-100'
                 }`}>
                   {m.text}
                 </div>
               </div>
             ))}
             {isTyping && (
-              <div className="flex justify-start">
-                <div className="bg-slate-100 p-3 rounded-2xl text-slate-500 text-sm animate-pulse">AI is thinking...</div>
+              <div className="flex items-end gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white">
+                  <Bot className="h-4 w-4" />
+                </span>
+                <div className="rounded-2xl rounded-bl-md bg-white px-4 py-3 shadow-sm ring-1 ring-slate-100">
+                  <div className="flex space-x-1">
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: '0.15s' }} />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: '0.3s' }} />
+                  </div>
+                </div>
               </div>
             )}
           </div>
-          <div className="p-4 border-t border-slate-200 flex space-x-2">
-            <input 
+
+          <div className="flex items-center gap-2 border-t border-slate-200/70 bg-white/60 p-3">
+            <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="flex-1 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="Suggest a smartphone..."
             />
-            <button onClick={sendMessage} className="bg-indigo-600 text-white p-2 rounded-xl">
-              <ArrowRight className="h-5 w-5" />
+            <button
+              onClick={sendMessage}
+              disabled={!input.trim()}
+              className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 p-2.5 text-white shadow-lg shadow-indigo-200 transition hover:opacity-90 disabled:opacity-40"
+            >
+              <Send className="h-5 w-5" />
             </button>
           </div>
         </div>
-      ) : (
-        <button 
+      )}
+
+      {!isOpen && (
+        <button
           onClick={() => setIsOpen(true)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-lg animate-float"
+          className="relative animate-float group flex items-center gap-3 rounded-full bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 p-4 text-white shadow-2xl shadow-indigo-300/60 transition-transform hover:scale-105"
         >
-          <Bot className="h-8 w-8" />
+          <span aria-hidden="true" className="absolute -inset-1 rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 opacity-50 blur-md animate-pulse" />
+          <span className="relative flex items-center gap-3">
+            <Bot className="h-7 w-7" />
+            <span className="hidden text-sm font-bold sm:block">Ask Nexus AI</span>
+          </span>
         </button>
       )}
     </div>
@@ -192,42 +309,158 @@ const AIAssistant = ({ products }: { products: Product[] }) => {
 // --- Pages ---
 
 const HomePage = ({ products, addToCart }: { products: Product[], addToCart: (p: Product) => void }) => (
-  <div className="space-y-16 py-8">
-    {/* Hero Section */}
-    <section className="relative rounded-3xl overflow-hidden bg-slate-900 text-white py-20 px-8">
-      <div className="absolute inset-0 opacity-40">
-        <img src="https://picsum.photos/seed/tech/1600/900" className="w-full h-full object-cover" alt="Hero" />
-      </div>
-      <div className="relative max-w-2xl">
-        <h1 className="text-5xl md:text-6xl font-extrabold mb-6 leading-tight">
-          Next-Gen Commerce <br/><span className="text-indigo-400 underline decoration-indigo-400">Simplified.</span>
-        </h1>
-        <p className="text-lg text-slate-300 mb-8 max-w-lg">
-          Discover a curated marketplace of world-class products. Shop smarter with Nexus AI and build your empire as a seller.
-        </p>
-        <div className="flex space-x-4">
-          <Link to="/shop" className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-bold flex items-center transition">
-            Start Shopping <ArrowRight className="ml-2 h-5 w-5" />
-          </Link>
-          <Link to="/dashboard" className="glass text-white px-8 py-4 rounded-2xl font-bold flex items-center transition">
-            Become a Seller
-          </Link>
+  <div className="space-y-20 py-10">
+    {/* Hero */}
+    <section className="bg-hero relative overflow-hidden rounded-[2.5rem] px-6 py-14 text-white sm:px-12 md:px-16 md:py-20">
+      <div className="bg-grid absolute inset-0" />
+      <div className="blob animate-blob absolute -left-20 -top-20 h-80 w-80 bg-indigo-500/40" />
+      <div className="blob animate-blob absolute -bottom-24 right-0 h-96 w-96 bg-fuchsia-500/40" style={{ animationDelay: '2s' }} />
+      <div className="blob animate-blob absolute -bottom-16 left-1/3 h-72 w-72 bg-sky-400/30" style={{ animationDelay: '4s' }} />
+
+      <div className="relative grid items-center gap-12 lg:grid-cols-2">
+        <div className="animate-fade-up space-y-8">
+          <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-1.5 text-xs font-semibold tracking-wider backdrop-blur">
+            <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+            AI-POWERED MARKETPLACE
+          </span>
+          <h1 className="font-display text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-5xl xl:text-6xl">
+            Next-Gen Commerce,<br />
+            <span className="text-gradient-light">Beautifully Simplified.</span>
+          </h1>
+          <p className="max-w-lg text-base text-slate-300 md:text-lg">
+            Discover a curated marketplace of world-class products. Shop smarter with Nexus AI, or sell and grow your own brand.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link
+              to="/shop"
+              className="group inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 px-8 py-4 font-bold text-white shadow-xl shadow-indigo-950/50 transition-all hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-fuchsia-500/40"
+            >
+              Start Shopping
+              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+            </Link>
+            <Link
+              to="/dashboard"
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-8 py-4 font-bold text-white backdrop-blur transition-all hover:bg-white/20"
+            >
+              Become a Seller
+            </Link>
+          </div>
+          <div className="grid max-w-md grid-cols-3 gap-6 border-t border-white/10 pt-8">
+            <div>
+              <p className="font-display text-2xl font-extrabold text-white">50K+</p>
+              <p className="text-xs text-slate-400">Curated products</p>
+            </div>
+            <div>
+              <p className="font-display text-2xl font-extrabold text-white">10K+</p>
+              <p className="text-xs text-slate-400">Verified sellers</p>
+            </div>
+            <div>
+              <p className="font-display text-2xl font-extrabold text-white">4.9<span className="text-amber-300">&#9733;</span></p>
+              <p className="text-xs text-slate-400">Average rating</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="relative hidden h-[420px] lg:block">
+          <div className="animate-float absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 rounded-2xl bg-white p-4 shadow-2xl shadow-indigo-950/40 ring-1 ring-white/40">
+            <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white">
+              <Bot className="h-5 w-5" />
+              <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-green-400 ring-2 ring-white" />
+            </span>
+            <div>
+              <p className="text-sm font-bold text-slate-900">Nexus AI</p>
+              <p className="text-xs font-semibold text-green-600">Online - ask me anything</p>
+            </div>
+          </div>
+          {products.slice(0, 4).map((p, i) => {
+            const positions = [
+              'left-0 top-4 w-48 -rotate-6',
+              'right-0 top-0 w-40 rotate-3',
+              'left-8 top-64 w-44 rotate-2',
+              'right-6 top-56 w-52 -rotate-3',
+            ];
+            return (
+              <div
+                key={p.id}
+                className={`${positions[i]} ${i % 2 === 0 ? 'animate-float' : 'animate-float-slow'} absolute rounded-2xl bg-white/90 p-3 shadow-2xl shadow-indigo-950/40 ring-1 ring-white/50 backdrop-blur`}
+                style={{ animationDelay: `${i * 0.8}s` }}
+              >
+                <img src={p.imageUrl} alt={p.name} className="h-20 w-full rounded-xl object-cover" />
+                <p className="mt-2 truncate text-xs font-bold text-slate-800">{p.name}</p>
+                <p className="text-xs font-semibold text-indigo-600">${p.price.toFixed(2)}</p>
+              </div>
+            );
+          })}
         </div>
       </div>
     </section>
 
-    {/* Featured Products */}
-    <section>
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-slate-900">Featured Trends</h2>
-          <p className="text-slate-500">Handpicked items popular right now</p>
+    {/* Trust strip */}
+    <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {[
+        { icon: Truck, title: 'Free Fast Delivery', desc: 'Free shipping over $50' },
+        { icon: ShieldCheck, title: 'Secure Payments', desc: '256-bit encrypted checkout' },
+        { icon: Sparkles, title: 'AI Shopping Coach', desc: 'Instant recommendations' },
+        { icon: Zap, title: 'Instant Checkout', desc: 'One-click, zero friction' },
+      ].map((f) => (
+        <div key={f.title} className="card-shadow card-shadow-hover group flex items-start gap-4 rounded-3xl border border-slate-100 bg-white p-5">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50 text-indigo-600 transition-colors group-hover:from-indigo-500 group-hover:to-violet-500 group-hover:text-white">
+            <f.icon className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="font-display text-sm font-bold text-slate-900">{f.title}</p>
+            <p className="mt-0.5 text-xs text-slate-500">{f.desc}</p>
+          </div>
         </div>
-        <Link to="/shop" className="text-indigo-600 font-semibold hover:underline flex items-center">
-          View All <ArrowRight className="ml-1 h-4 w-4" />
-        </Link>
+      ))}
+    </section>
+
+    {/* Categories */}
+    <section>
+      <div className="mb-8">
+        <p className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-indigo-600">
+          <Zap className="h-4 w-4" /> Shop by category
+        </p>
+        <div className="mt-2 flex items-end justify-between">
+          <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900">Browse Trending Categories</h2>
+          <Link to="/shop" className="hidden items-center gap-1.5 font-semibold text-indigo-600 hover:text-indigo-700 sm:inline-flex">
+            View All <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+      <div className="no-scrollbar -mx-1 flex gap-3 overflow-x-auto px-1 pb-2">
+        {['All', ...CATEGORIES].map((c, i) => (
+          <Link
+            key={c}
+            to={c === 'All' ? '/shop' : `/shop?cat=${encodeURIComponent(c)}`}
+            className={`group flex min-w-[150px] items-center justify-between rounded-2xl border p-4 transition-all duration-300 ${
+              i === 0
+                ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-200'
+                : 'border-slate-100 bg-white text-slate-700 hover:-translate-y-1 hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-100'
+            }`}
+          >
+            <span className="font-display font-bold">{c}</span>
+            <ArrowRight className="h-4 w-4 opacity-50 transition-transform group-hover:translate-x-1" />
+          </Link>
+        ))}
+      </div>
+    </section>
+
+    {/* Featured */}
+    <section>
+      <div className="mb-8">
+        <p className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-indigo-600">
+          <Flame className="h-4 w-4" /> Featured
+        </p>
+        <div className="mt-2 flex items-end justify-between">
+          <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900">Trending Right Now</h2>
+          <Link to="/shop" className="group inline-flex items-center gap-1.5 font-semibold text-indigo-600 hover:text-indigo-700">
+            View All <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+          </Link>
+        </div>
+        <p className="mt-2 text-slate-500">Handpicked items popular right now</p>
+      </div>
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {products.slice(0, 4).map(p => (
           <ProductCard key={p.id} product={p} addToCart={addToCart} />
         ))}
@@ -237,60 +470,95 @@ const HomePage = ({ products, addToCart }: { products: Product[], addToCart: (p:
 );
 
 const ShopPage = ({ products, addToCart }: { products: Product[], addToCart: (p: Product) => void }) => {
-  const [filter, setFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const filtered = products.filter(p => 
+  const rawFilter = searchParams.get('cat') ?? 'All';
+  const filter = CATEGORIES.includes(rawFilter as Category) ? rawFilter : 'All';
+
+  const filtered = products.filter(p =>
     (filter === 'All' || p.category === filter) &&
     p.name.toLowerCase().includes(search.toLowerCase())
   );
 
+  const setFilter = (cat: string) => setSearchParams(cat === 'All' ? {} : { cat });
+
   return (
-    <div className="py-8 space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <h1 className="text-3xl font-bold text-slate-900">Marketplace</h1>
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
-            <input 
-              placeholder="Search products..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 pr-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full md:w-64"
-            />
+    <div className="space-y-8 py-10">
+      <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 p-8 text-white md:p-12">
+        <div className="bg-grid absolute inset-0 opacity-40" />
+        <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
+        <div className="relative">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-1.5 text-xs font-semibold tracking-wider backdrop-blur">
+            <Sparkles className="h-3.5 w-3.5 text-amber-200" /> EXPLORE THE MARKETPLACE
+          </span>
+          <h1 className="font-display mt-4 text-3xl font-extrabold tracking-tight md:text-4xl">Marketplace</h1>
+          <p className="mt-2 max-w-xl text-white/80">Handpicked products from the best sellers - find your next favourite.</p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative flex-1 sm:max-w-md">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search products..."
+                className="w-full rounded-2xl border border-white/20 bg-white py-3.5 pl-11 pr-4 text-slate-800 shadow-lg placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-white/30"
+              />
+            </div>
+            <span className="inline-flex items-center gap-2 self-start rounded-2xl bg-white/15 px-4 py-3 text-sm font-semibold backdrop-blur">
+              {filtered.length} {filtered.length === 1 ? 'product' : 'products'}
+            </span>
           </div>
-          <select 
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="px-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="All">All Categories</option>
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
         </div>
       </div>
 
+      <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {['All', ...CATEGORIES].map(c => (
+          <button
+            key={c}
+            onClick={() => setFilter(c)}
+            className={`whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold transition-all duration-200 ${
+              filter === c
+                ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-200'
+                : 'border border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'
+            }`}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
       {filtered.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {filtered.map(p => (
             <ProductCard key={p.id} product={p} addToCart={addToCart} />
           ))}
         </div>
       ) : (
-        <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
-           <Search className="h-12 w-12 text-slate-300 mx-auto mb-4" />
-           <p className="text-slate-500">No products found for your search.</p>
+        <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white/60 py-20 text-center">
+          <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+            <Search className="h-8 w-8" />
+          </span>
+          <p className="font-display mt-4 text-xl font-bold text-slate-800">No products found</p>
+          <p className="mt-1 text-slate-500">Try a different keyword or category.</p>
+          <button
+            onClick={() => { setSearch(''); setFilter('All'); }}
+            className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:shadow-xl"
+          >
+            Clear filters
+          </button>
         </div>
       )}
     </div>
   );
 };
 
-const CartPage = ({ items, products, onUpdate, onCheckout }: { 
-  items: CartItem[], 
-  products: Product[], 
+const FREE_SHIPPING_THRESHOLD = 50;
+
+const CartPage = ({ items, products, onUpdate, onCheckout }: {
+  items: CartItem[],
+  products: Product[],
   onUpdate: (id: string, q: number) => void,
-  onCheckout: () => void 
+  onCheckout: () => void
 }) => {
   const cartDetails = items.map(item => ({
     ...item,
@@ -298,84 +566,106 @@ const CartPage = ({ items, products, onUpdate, onCheckout }: {
   })).filter(d => !!d.product);
 
   const total = cartDetails.reduce((acc, curr) => acc + (curr.product.price * curr.quantity), 0);
+  const count = cartDetails.reduce((acc, c) => acc + c.quantity, 0);
+  const remaining = Math.max(0, FREE_SHIPPING_THRESHOLD - total);
 
   if (items.length === 0) return (
-    <div className="py-20 text-center space-y-6">
-      <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-600">
-        <ShoppingCart className="h-10 w-10" />
-      </div>
-      <h2 className="text-3xl font-bold text-slate-900">Your cart is empty</h2>
-      <p className="text-slate-500 max-w-xs mx-auto">Looks like you haven't added anything to your cart yet.</p>
-      <Link to="/shop" className="inline-block bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold">Start Shopping</Link>
+    <div className="space-y-6 py-24 text-center">
+      <span className="animate-float mx-auto flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-50 to-violet-50 text-indigo-600">
+        <ShoppingCart className="h-12 w-12" />
+      </span>
+      <h2 className="font-display text-3xl font-extrabold text-slate-900">Your cart is empty</h2>
+      <p className="mx-auto max-w-xs text-slate-500">Looks like you haven't added anything yet - let's fix that.</p>
+      <Link to="/shop" className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-3.5 font-bold text-white shadow-lg shadow-indigo-200 transition hover:shadow-xl">
+        Start Shopping <ArrowRight className="h-5 w-5" />
+      </Link>
     </div>
   );
 
   return (
-    <div className="py-8 grid lg:grid-cols-3 gap-8">
-      <div className="lg:col-span-2 space-y-4">
-        <h1 className="text-3xl font-bold text-slate-900 mb-8">Shopping Cart</h1>
+    <div className="grid gap-8 py-10 lg:grid-cols-3">
+      <div className="space-y-4 lg:col-span-2">
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="font-display text-3xl font-extrabold text-slate-900">Shopping Cart</h1>
+          <span className="rounded-full bg-indigo-50 px-4 py-1.5 text-sm font-bold text-indigo-600">{count} items</span>
+        </div>
+
+        {remaining > 0 && (
+          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+            <p className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+              <Truck className="h-4 w-4" /> You're ${remaining.toFixed(2)} away from free shipping
+            </p>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-amber-100">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all duration-500"
+                style={{ width: `${Math.min(100, (total / FREE_SHIPPING_THRESHOLD) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {cartDetails.map(item => (
-          <div key={item.productId} className="flex items-center space-x-4 bg-white p-4 rounded-2xl border border-slate-200">
-            <img src={item.product.imageUrl} className="w-20 h-20 object-cover rounded-xl" alt={item.product.name} />
-            <div className="flex-1">
-              <h3 className="font-bold text-slate-900">{item.product.name}</h3>
-              <p className="text-sm text-slate-500">${item.product.price.toFixed(2)} each</p>
+          <div key={item.productId} className="card-shadow card-shadow-hover flex items-center gap-4 rounded-3xl border border-slate-100 bg-white p-4 sm:gap-5 sm:p-5">
+            <img src={item.product.imageUrl} alt={item.product.name} className="h-20 w-20 rounded-2xl object-cover sm:h-24 sm:w-24" />
+            <div className="min-w-0 flex-1">
+              <h3 className="font-display truncate font-bold text-slate-900">{item.product.name}</h3>
+              <p className="mt-0.5 text-sm text-slate-500">${item.product.price.toFixed(2)} each</p>
+              <button onClick={() => onUpdate(item.productId, 0)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-slate-400 transition hover:text-red-500">
+                <Trash2 className="h-3.5 w-3.5" /> Remove
+              </button>
             </div>
-            <div className="flex items-center space-x-3">
-              <button 
-                onClick={() => onUpdate(item.productId, item.quantity - 1)}
-                className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition"
-              >-</button>
-              <span className="font-semibold">{item.quantity}</span>
-              <button 
-                onClick={() => onUpdate(item.productId, item.quantity + 1)}
-                className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition"
-              >+</button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                <button onClick={() => onUpdate(item.productId, item.quantity - 1)} className="h-9 w-9 text-slate-600 transition hover:bg-slate-100">-</button>
+                <span className="w-9 text-center font-bold text-slate-900">{item.quantity}</span>
+                <button onClick={() => onUpdate(item.productId, item.quantity + 1)} className="h-9 w-9 text-slate-600 transition hover:bg-slate-100">+</button>
+              </div>
             </div>
-            <div className="text-right min-w-[80px]">
-              <p className="font-bold text-slate-900">${(item.product.price * item.quantity).toFixed(2)}</p>
-            </div>
-            <button 
-              onClick={() => onUpdate(item.productId, 0)}
-              className="p-2 text-slate-400 hover:text-red-500 transition"
-            >
-              <Trash2 className="h-5 w-5" />
-            </button>
+            <p className="font-display min-w-[70px] text-right text-lg font-extrabold text-slate-900">
+              ${(item.product.price * item.quantity).toFixed(2)}
+            </p>
           </div>
         ))}
       </div>
-      
+
       <div className="lg:col-span-1">
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 sticky top-24">
-          <h2 className="text-xl font-bold text-slate-900 mb-6">Order Summary</h2>
-          <div className="space-y-4 mb-8">
-            <div className="flex justify-between text-slate-500">
-              <span>Subtotal</span>
-              <span>${total.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-slate-500">
-              <span>Shipping</span>
-              <span className="text-green-600 font-medium">Free</span>
-            </div>
-            <div className="pt-4 border-t border-slate-100 flex justify-between text-xl font-bold text-slate-900">
-              <span>Total</span>
-              <span>${total.toFixed(2)}</span>
-            </div>
+        <div className="card-shadow sticky top-28 overflow-hidden rounded-3xl border border-slate-100 bg-white">
+          <div className="bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-5">
+            <h2 className="font-display text-lg font-extrabold text-white">Order Summary</h2>
           </div>
-          <button 
-            onClick={onCheckout}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-2xl font-bold flex items-center justify-center transition"
-          >
-            <CreditCard className="mr-2 h-5 w-5" /> Checkout Now
-          </button>
+          <div className="p-8">
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between text-slate-500">
+                <span>Subtotal ({count} items)</span>
+                <span className="font-semibold text-slate-800">${total.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-slate-500">
+                <span>Shipping</span>
+                <span className="font-semibold text-green-600">{remaining === 0 ? 'Free' : '$4.99'}</span>
+              </div>
+              <div className="flex justify-between border-t border-slate-100 pt-3 font-display text-xl font-extrabold text-slate-900">
+                <span>Total</span>
+                <span>${total.toFixed(2)}</span>
+              </div>
+            </div>
+            <button
+              onClick={onCheckout}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 py-4 font-bold text-white shadow-lg shadow-indigo-200 transition hover:shadow-xl"
+            >
+              <CreditCard className="h-5 w-5" /> Checkout Now
+            </button>
+            <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+              <ShieldCheck className="h-3.5 w-3.5 text-green-500" /> Secure 256-bit encrypted checkout
+            </p>
+          </div>
         </div>
       </div>
     </div>
   );
 };
 
-const SellerDashboard = ({ products, onAddProduct, onDeleteProduct }: { 
-  products: Product[], 
+const SellerDashboard = ({ products, onAddProduct, onDeleteProduct }: {
+  products: Product[],
   onAddProduct: (p: Partial<Product>) => void,
   onDeleteProduct: (id: string) => void
 }) => {
@@ -402,47 +692,51 @@ const SellerDashboard = ({ products, onAddProduct, onDeleteProduct }: {
     try {
       const desc = await generateProductDescription(newP.name, newP.category);
       alert(`AI Suggestion for ${newP.name}:\n\n${desc}`);
-    } catch(e) {}
+    } catch (e) {}
     finally { setIsGenerating(false); }
-  }
+  };
+
+  const stats: { label: string; value: string; note: string; icon: LucideIcon; gradient: string }[] = [
+    { label: 'Total Revenue', value: '$12,450.00', note: '+12% vs last month', icon: Wallet, gradient: 'from-emerald-500 to-teal-500' },
+    { label: 'Active Listings', value: String(products.length), note: 'Across all categories', icon: Boxes, gradient: 'from-indigo-500 to-violet-500' },
+    { label: 'Pending Orders', value: '14', note: 'Awaiting fulfilment', icon: Timer, gradient: 'from-amber-500 to-orange-500' },
+  ];
 
   return (
-    <div className="py-8 space-y-8">
-      <div className="flex justify-between items-center">
+    <div className="space-y-8 py-10">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Seller Dashboard</h1>
-          <p className="text-slate-500">Manage your inventory and insights</p>
+          <h1 className="font-display text-3xl font-extrabold text-slate-900">Seller Dashboard</h1>
+          <p className="mt-1 text-slate-500">Manage your inventory and track performance.</p>
         </div>
-        <button 
-          onClick={() => setIsAdding(true)}
-          className="bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center shadow-lg shadow-indigo-200"
-        >
-          <PlusCircle className="mr-2 h-5 w-5" /> New Product
+        <button onClick={() => setIsAdding(true)} className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3.5 font-bold text-white shadow-lg shadow-indigo-200 transition hover:shadow-xl">
+          <PlusCircle className="h-5 w-5" /> New Product
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-slate-200">
-          <p className="text-slate-500 text-sm font-medium mb-1">Total Revenue</p>
-          <p className="text-3xl font-bold text-slate-900">$12,450.00</p>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-200">
-          <p className="text-slate-500 text-sm font-medium mb-1">Active Listings</p>
-          <p className="text-3xl font-bold text-slate-900">{products.length}</p>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-200">
-          <p className="text-slate-500 text-sm font-medium mb-1">Pending Orders</p>
-          <p className="text-3xl font-bold text-slate-900">14</p>
-        </div>
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+        {stats.map(s => (
+          <div key={s.label} className="card-shadow card-shadow-hover flex items-center gap-4 rounded-3xl border border-slate-100 bg-white p-6">
+            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${s.gradient} text-white shadow-lg`}>
+              <s.icon className="h-6 w-6" />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-500">{s.label}</p>
+              <p className="font-display text-2xl font-extrabold text-slate-900">{s.value}</p>
+              <p className="truncate text-xs text-slate-400">{s.note}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-          <h2 className="font-bold text-slate-900">Inventory Management</h2>
+      <div className="card-shadow overflow-hidden rounded-3xl border border-slate-100 bg-white">
+        <div className="border-b border-slate-100 p-6">
+          <h2 className="font-display text-xl font-extrabold text-slate-900">Inventory Management</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Manage your live product listings.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
-            <thead className="bg-slate-50 text-slate-500 text-sm font-medium">
+            <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400">
               <tr>
                 <th className="px-6 py-4">Product</th>
                 <th className="px-6 py-4">Category</th>
@@ -451,27 +745,27 @@ const SellerDashboard = ({ products, onAddProduct, onDeleteProduct }: {
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-50">
               {products.map(p => (
-                <tr key={p.id} className="hover:bg-slate-50 transition">
+                <tr key={p.id} className="transition-colors hover:bg-slate-50/70">
                   <td className="px-6 py-4">
-                    <div className="flex items-center space-x-3">
-                      <img src={p.imageUrl} className="h-10 w-10 rounded-lg object-cover" alt="" />
+                    <div className="flex items-center gap-3">
+                      <img src={p.imageUrl} alt={p.name} className="h-11 w-11 rounded-xl object-cover" />
                       <span className="font-semibold text-slate-900">{p.name}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600">{p.category}</td>
-                  <td className="px-6 py-4 text-slate-900 font-medium">${p.price.toFixed(2)}</td>
+                  <td className="px-6 py-4 font-semibold text-slate-900">${p.price.toFixed(2)}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-lg text-xs font-bold ${p.stock < 5 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                      p.stock < 5 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'
+                    }`}>
+                      {p.stock < 5 && <Flame className="h-3 w-3" />}
                       {p.stock} units
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button 
-                      onClick={() => onDeleteProduct(p.id)}
-                      className="p-2 text-slate-400 hover:text-red-500 transition"
-                    >
+                    <button onClick={() => onDeleteProduct(p.id)} className="rounded-xl p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-500">
                       <Trash2 className="h-5 w-5" />
                     </button>
                   </td>
@@ -483,60 +777,72 @@ const SellerDashboard = ({ products, onAddProduct, onDeleteProduct }: {
       </div>
 
       {isAdding && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-8 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h2 className="text-2xl font-bold mb-6">Create New Listing</h2>
-            <div className="space-y-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="animate-fade-up w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-violet-600 px-8 py-5 text-white">
               <div>
-                <label className="block text-sm font-semibold mb-2">Product Name</label>
-                <input 
+                <h2 className="font-display text-xl font-extrabold">Create New Listing</h2>
+                <p className="text-xs text-white/70">Add a product to your storefront</p>
+              </div>
+              <button onClick={() => setIsAdding(false)} className="rounded-lg p-1.5 transition hover:bg-white/20">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-8">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">Product Name</label>
+                <input
                   value={newP.name}
-                  onChange={e => setNewP({...newP, name: e.target.value})}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                  onChange={e => setNewP({ ...newP, name: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                   placeholder="e.g. Vintage Camera"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold mb-2">Price ($)</label>
-                  <input 
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Price ($)</label>
+                  <input
                     type="number"
                     value={newP.price}
-                    onChange={e => setNewP({...newP, price: e.target.value})}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    onChange={e => setNewP({ ...newP, price: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold mb-2">Stock Level</label>
-                  <input 
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">Stock Level</label>
+                  <input
                     type="number"
                     value={newP.stock}
-                    onChange={e => setNewP({...newP, stock: e.target.value})}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    onChange={e => setNewP({ ...newP, stock: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-semibold mb-2">Category</label>
-                <select 
+                <label className="mb-2 block text-sm font-semibold text-slate-700">Category</label>
+                <select
                   value={newP.category}
-                  onChange={e => setNewP({...newP, category: e.target.value as Category})}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  onChange={e => setNewP({ ...newP, category: e.target.value as Category })}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 >
                   {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <button 
+              <button
                 onClick={generateAI}
                 disabled={!newP.name || isGenerating}
-                className="w-full flex items-center justify-center text-indigo-600 text-sm font-bold border border-indigo-100 bg-indigo-50 py-3 rounded-xl hover:bg-indigo-100 transition"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 py-3 text-sm font-bold text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
               >
-                {isGenerating ? 'AI is writing...' : <><Bot className="mr-2 h-4 w-4" /> Enhance with AI</>}
+                {isGenerating ? 'AI is writing...' : <><Bot className="h-4 w-4" /> Enhance with AI</>}
               </button>
             </div>
-            <div className="flex space-x-4 mt-8">
-              <button onClick={() => setIsAdding(false)} className="flex-1 text-slate-500 font-bold py-3 hover:text-slate-700 transition">Cancel</button>
-              <button onClick={handleAdd} className="flex-1 bg-indigo-600 text-white font-bold py-3 rounded-2xl hover:bg-indigo-700 transition shadow-lg shadow-indigo-200">List Product</button>
+            <div className="flex gap-3 border-t border-slate-100 p-6">
+              <button onClick={() => setIsAdding(false)} className="flex-1 rounded-2xl border border-slate-200 py-3 font-bold text-slate-500 transition hover:text-slate-700">
+                Cancel
+              </button>
+              <button onClick={handleAdd} className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 py-3 font-bold text-white shadow-lg shadow-indigo-200 transition hover:shadow-xl">
+                List Product
+              </button>
             </div>
           </div>
         </div>
@@ -544,6 +850,113 @@ const SellerDashboard = ({ products, onAddProduct, onDeleteProduct }: {
     </div>
   );
 };
+
+const NewsletterForm = () => {
+  const [email, setEmail] = useState('');
+  const [done, setDone] = useState(false);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setDone(true);
+    setEmail('');
+  };
+
+  if (done) {
+    return (
+      <div className="flex items-center gap-2 rounded-2xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-400">
+        <CheckCircle className="h-4 w-4" /> Subscribed! Welcome to Nexus.
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="flex gap-2">
+      <input
+        type="email"
+        required
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        placeholder="Enter your email"
+        className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+      />
+      <button type="submit" className="shrink-0 rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-900/40 transition hover:shadow-xl">
+        Subscribe
+      </button>
+    </form>
+  );
+};
+
+const Footer = () => (
+  <footer className="relative mt-24 overflow-hidden bg-slate-950 text-slate-300">
+    <div className="h-1 w-full bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-sky-400" />
+    <div className="bg-grid absolute inset-0 opacity-20" />
+    <div className="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+      <div className="grid grid-cols-1 gap-10 md:grid-cols-2 lg:grid-cols-4">
+        <div className="space-y-4">
+          <Link to="/" className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white">
+              <ShoppingBag className="h-5 w-5" />
+            </span>
+            <span className="font-display text-xl font-extrabold text-white">
+              Nexus<span className="text-gradient-light">Market</span>
+            </span>
+          </Link>
+          <p className="max-w-xs text-sm text-slate-400">
+            The future of distributed e-commerce. AI-powered, micro-service oriented, and user-first.
+          </p>
+          <div className="flex gap-3">
+            {[Globe, Mail, MessageCircle, Rss].map((Icon, i) => (
+              <a
+                key={i}
+                href="#"
+                onClick={(e) => e.preventDefault()}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-slate-400 transition hover:from-indigo-500 hover:to-fuchsia-500 hover:bg-gradient-to-br hover:text-white"
+              >
+                <Icon className="h-4 w-4" />
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="font-display mb-4 font-bold text-white">Marketplace</h4>
+          <ul className="space-y-2.5 text-sm">
+            <li><Link to="/shop" className="text-slate-400 transition hover:text-indigo-400">All Products</Link></li>
+            <li><Link to="/shop?cat=Electronics" className="text-slate-400 transition hover:text-indigo-400">Electronics</Link></li>
+            <li><Link to="/shop?cat=Fashion" className="text-slate-400 transition hover:text-indigo-400">Fashion</Link></li>
+            <li><Link to="/shop?cat=Home%20%26%20Garden" className="text-slate-400 transition hover:text-indigo-400">Home &amp; Garden</Link></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="font-display mb-4 font-bold text-white">Support</h4>
+          <ul className="space-y-2.5 text-sm">
+            <li><Link to="/profile" className="text-slate-400 transition hover:text-indigo-400">My Orders</Link></li>
+            <li><Link to="/profile" className="text-slate-400 transition hover:text-indigo-400">Track Order</Link></li>
+            <li><Link to="/dashboard" className="text-slate-400 transition hover:text-indigo-400">Sell on Nexus</Link></li>
+            <li><span className="cursor-pointer text-slate-400 transition hover:text-indigo-400">Help Center</span></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="font-display mb-4 font-bold text-white">Stay in the loop</h4>
+          <p className="mb-4 text-sm text-slate-400">Get exclusive deals and product drops in your inbox.</p>
+          <NewsletterForm />
+        </div>
+      </div>
+
+      <div className="mt-14 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 sm:flex-row">
+        <p className="text-sm text-slate-500">&copy; {new Date().getFullYear()} NexusMarket Inc. All rights reserved.</p>
+        <div className="flex gap-6 text-sm">
+          <span className="cursor-pointer text-slate-500 transition hover:text-slate-300">Privacy Policy</span>
+          <span className="cursor-pointer text-slate-500 transition hover:text-slate-300">Terms of Service</span>
+          <span className="cursor-pointer text-slate-500 transition hover:text-slate-300">Cookies</span>
+        </div>
+      </div>
+    </div>
+  </footer>
+);
 
 // --- Main App Logic ---
 
@@ -619,55 +1032,69 @@ const App = () => {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="flex flex-col items-center space-y-4">
-        <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-slate-600 font-medium animate-pulse">Initializing Nexus Engines...</p>
+    <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-gradient-to-br from-slate-50 via-indigo-50/40 to-slate-50">
+      <span className="animate-float flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 text-white shadow-xl shadow-indigo-200">
+        <ShoppingBag className="h-7 w-7" />
+      </span>
+      <div className="flex items-center gap-1.5">
+        <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-indigo-500" />
+        <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-violet-500" style={{ animationDelay: '0.12s' }} />
+        <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-fuchsia-500" style={{ animationDelay: '0.24s' }} />
       </div>
+      <p className="font-display animate-pulse text-sm font-bold text-slate-500">Initializing Nexus engines...</p>
     </div>
   );
 
   return (
     <HashRouter>
-      <div className="min-h-screen flex flex-col">
+      <div className="flex min-h-screen flex-col">
         <Navbar cartCount={cart.reduce((a, c) => a + c.quantity, 0)} user={user} />
-        
-        <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 sm:px-6 lg:px-8">
           <Routes>
             <Route path="/" element={<HomePage products={products} addToCart={addToCart} />} />
             <Route path="/shop" element={<ShopPage products={products} addToCart={addToCart} />} />
             <Route path="/cart" element={<CartPage items={cart} products={products} onUpdate={updateCart} onCheckout={checkout} />} />
             <Route path="/dashboard" element={<SellerDashboard products={products.filter(p => p.sellerId === user?.id)} onAddProduct={addProduct} onDeleteProduct={deleteProduct} />} />
             <Route path="/profile" element={
-              <div className="py-8 space-y-8">
-                <h1 className="text-3xl font-bold">Your Profile</h1>
-                <div className="bg-white p-8 rounded-3xl border border-slate-200">
-                  <div className="flex items-center space-x-4 mb-8">
-                    <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
-                       <UserIcon className="h-10 w-10" />
-                    </div>
-                    <div>
-                       <h2 className="text-2xl font-bold">{user?.name}</h2>
-                       <p className="text-slate-500">{user?.email}</p>
-                       <span className="inline-block mt-2 px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-lg uppercase tracking-wider">{user?.role}</span>
-                    </div>
+              <div className="space-y-8 py-10">
+                <div className="flex items-center gap-5">
+                  <span className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white shadow-lg shadow-indigo-200">
+                    <UserIcon className="h-10 w-10" />
+                  </span>
+                  <div>
+                    <h1 className="font-display text-3xl font-extrabold text-slate-900">{user?.name}</h1>
+                    <p className="text-slate-500">{user?.email}</p>
+                    <span className="mt-2 inline-block rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">
+                      {user?.role}
+                    </span>
                   </div>
-                  <h3 className="text-xl font-bold mb-4">Order History</h3>
+                </div>
+                <div className="card-shadow rounded-3xl border border-slate-100 bg-white p-8">
+                  <h2 className="font-display mb-6 flex items-center gap-2 text-xl font-extrabold text-slate-900">
+                    <Package className="h-5 w-5 text-indigo-600" /> Order History
+                  </h2>
                   {orders.length > 0 ? (
                     <div className="space-y-4">
                       {orders.map(o => (
-                        <div key={o.id} className="p-4 border border-slate-100 rounded-2xl flex justify-between items-center hover:bg-slate-50 transition">
-                           <div className="flex items-center space-x-4">
-                              <Package className="h-6 w-6 text-slate-400" />
-                              <div>
-                                 <p className="font-bold">Order #{o.id.toUpperCase()}</p>
-                                 <p className="text-sm text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</p>
-                              </div>
-                           </div>
-                           <div className="text-right">
-                              <p className="font-bold text-indigo-600">${o.total.toFixed(2)}</p>
-                              <span className="text-xs font-bold text-slate-400 uppercase">{o.status}</span>
-                           </div>
+                        <div key={o.id} className="flex items-center justify-between gap-4 rounded-2xl border border-slate-100 p-5 transition-colors hover:bg-slate-50/70">
+                          <div className="flex items-center gap-4">
+                            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+                              <Package className="h-5 w-5" />
+                            </span>
+                            <div>
+                              <p className="font-bold text-slate-900">Order #{o.id.toUpperCase()}</p>
+                              <p className="text-sm text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-display font-extrabold text-indigo-600">${o.total.toFixed(2)}</p>
+                            <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+                              o.status === 'delivered' ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'
+                            }`}>
+                              {o.status}
+                            </span>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -681,39 +1108,7 @@ const App = () => {
         </main>
 
         <AIAssistant products={products} />
-
-        <footer className="bg-white border-t border-slate-200 mt-20">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-              <div className="col-span-1 md:col-span-2">
-                <div className="flex items-center space-x-2 mb-4">
-                  <ShoppingBag className="h-6 w-6 text-indigo-600" />
-                  <span className="text-xl font-bold">NexusMarket</span>
-                </div>
-                <p className="text-slate-500 max-w-xs">The future of distributed e-commerce. AI-powered, micro-service oriented, and user-first.</p>
-              </div>
-              <div>
-                <h4 className="font-bold mb-4">Marketplace</h4>
-                <ul className="space-y-2 text-slate-500 text-sm">
-                  <li><Link to="/shop" className="hover:text-indigo-600">All Products</Link></li>
-                  <li><Link to="/shop" className="hover:text-indigo-600">Featured Items</Link></li>
-                  <li><Link to="/shop" className="hover:text-indigo-600">Categories</Link></li>
-                </ul>
-              </div>
-              <div>
-                <h4 className="font-bold mb-4">Legal</h4>
-                <ul className="space-y-2 text-slate-500 text-sm">
-                  <li className="hover:text-indigo-600 cursor-pointer">Privacy Policy</li>
-                  <li className="hover:text-indigo-600 cursor-pointer">Terms of Service</li>
-                  <li className="hover:text-indigo-600 cursor-pointer">Cookie Settings</li>
-                </ul>
-              </div>
-            </div>
-            <div className="mt-12 pt-8 border-t border-slate-100 text-center text-slate-400 text-sm">
-              &copy; {new Date().getFullYear()} NexusMarket Inc. All rights reserved. Built with Gemini AI.
-            </div>
-          </div>
-        </footer>
+        <Footer />
       </div>
     </HashRouter>
   );
