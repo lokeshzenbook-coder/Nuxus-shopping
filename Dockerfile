@@ -1,31 +1,33 @@
-# ---------- Stage 1: Build ----------
+# ──────────────────────────────────────────────────────────
+# Stage 1 — Build
+# ──────────────────────────────────────────────────────────
 FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Install only prod deps later → keep dev here for build
 COPY package*.json ./
 RUN npm ci
 
 COPY . .
-
-# Build your app (e.g. TypeScript → dist)
 RUN npm run build
 
-# Remove dev dependencies after build
-RUN npm prune --omit=dev
+# ──────────────────────────────────────────────────────────
+# Stage 2 — Serve (nginx for static SPA)
+# ──────────────────────────────────────────────────────────
+FROM nginx:alpine
 
+# Remove default nginx site
+RUN rm -rf /usr/share/nginx/html/*
 
-# ---------- Stage 2: Minimal Runtime ----------
-FROM gcr.io/distroless/nodejs18-debian11
+# Copy built SPA assets
+COPY --from=builder /app/dist /usr/share/nginx/html
 
-WORKDIR /app
+# Custom nginx config (SPA routing, gzip, security headers)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy only minimal required files
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 80
 
-ENV NODE_ENV=production
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -qO- http://localhost/healthz || exit 1
 
-# Distroless uses node as entrypoint
-CMD ["dist/index.js"]
+CMD ["nginx", "-g", "daemon off;"]
