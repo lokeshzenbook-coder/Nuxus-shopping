@@ -108,8 +108,13 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+      # FIX: save BOTH tags into the tarball, not just the SHA tag
       - name: Save Docker image as tarball
-        run: docker save ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }} -o image.tar
+        run: |
+          docker save \
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }} \
+            ${{ env.IMAGE_NAME }}:latest \
+            -o image.tar
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
