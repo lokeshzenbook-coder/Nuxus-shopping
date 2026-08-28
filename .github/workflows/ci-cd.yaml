@@ -121,90 +121,90 @@ jobs:
             trivy-image-report.txt
           retention-days: 14
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 2 — Deploy to Staging (auto on main push)
-  # ────────────────────────────────────────────────────────────
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: build-and-scan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # Add "environment: staging" here to enable GitHub Environment protection rules
+  # # ────────────────────────────────────────────────────────────
+  # # JOB 2 — Deploy to Staging (auto on main push)
+  # # ────────────────────────────────────────────────────────────
+  # deploy-staging:
+  #   name: Deploy to Staging
+  #   runs-on: ubuntu-latest
+  #   needs: build-and-scan
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   # Add "environment: staging" here to enable GitHub Environment protection rules
 
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Checkout source
+  #       uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+  #     - name: Configure AWS Credentials
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+  #         aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+  #     - name: Update kubeconfig
+  #       run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-      - name: Set image in kustomize (staging)
-        working-directory: kubernetes/staging
-        run: kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_NAME }}:${{ needs.build-and-scan.outputs.image-tag }}
+  #     - name: Set image in kustomize (staging)
+  #       working-directory: kubernetes/staging
+  #       run: kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_NAME }}:${{ needs.build-and-scan.outputs.image-tag }}
 
-      - name: Apply Kubernetes manifests
-        run: kubectl apply -k kubernetes/staging/
+  #     - name: Apply Kubernetes manifests
+  #       run: kubectl apply -k kubernetes/staging/
 
-      - name: Wait for rollout
-        run: kubectl rollout status deployment/nexus-market -n nexus-market-staging --timeout=300s
+  #     - name: Wait for rollout
+  #       run: kubectl rollout status deployment/nexus-market -n nexus-market-staging --timeout=300s
 
-      - name: Print staging info
-        run: |
-          echo "::notice::Staging deployed — image ${{ env.IMAGE_NAME }}:${{ needs.build-and-scan.outputs.image-tag }}"
-          kubectl get pods -n nexus-market-staging -l app.kubernetes.io/name=nexus-market
+  #     - name: Print staging info
+  #       run: |
+  #         echo "::notice::Staging deployed — image ${{ env.IMAGE_NAME }}:${{ needs.build-and-scan.outputs.image-tag }}"
+  #         kubectl get pods -n nexus-market-staging -l app.kubernetes.io/name=nexus-market
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 3 — Deploy to Production (manual dispatch only)
-  # ────────────────────────────────────────────────────────────
-  deploy-production:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: build-and-scan
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'deploy'
-    # Add "environment: production" here to enable GitHub Environment protection rules
-    # (requires manual approval in repo Settings → Environments → production)
+  # # ────────────────────────────────────────────────────────────
+  # # JOB 3 — Deploy to Production (manual dispatch only)
+  # # ────────────────────────────────────────────────────────────
+  # deploy-production:
+  #   name: Deploy to Production
+  #   runs-on: ubuntu-latest
+  #   needs: build-and-scan
+  #   if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'deploy'
+  #   # Add "environment: production" here to enable GitHub Environment protection rules
+  #   # (requires manual approval in repo Settings → Environments → production)
 
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Checkout source
+  #       uses: actions/checkout@v4
 
-      - name: Resolve image tag
-        id: resolve
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-${{ needs.build-and-scan.outputs.image-tag }}}"
-          echo "image-tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Deploying image tag: $TAG"
+  #     - name: Resolve image tag
+  #       id: resolve
+  #       run: |
+  #         TAG="${{ github.event.inputs.tag }}"
+  #         TAG="${TAG:-${{ needs.build-and-scan.outputs.image-tag }}}"
+  #         echo "image-tag=$TAG" >> "$GITHUB_OUTPUT"
+  #         echo "Deploying image tag: $TAG"
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+  #     - name: Configure AWS Credentials
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+  #         aws-region: ${{ env.AWS_REGION }}
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+  #     - name: Update kubeconfig
+  #       run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-      - name: Set image in kustomize (production)
-        working-directory: kubernetes/production
-        run: kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.image-tag }}
+  #     - name: Set image in kustomize (production)
+  #       working-directory: kubernetes/production
+  #       run: kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.image-tag }}
 
-      - name: Apply Kubernetes manifests
-        run: kubectl apply -k kubernetes/production/
+  #     - name: Apply Kubernetes manifests
+  #       run: kubectl apply -k kubernetes/production/
 
-      - name: Wait for rollout
-        run: kubectl rollout status deployment/nexus-market -n nexus-market-production --timeout=300s
+  #     - name: Wait for rollout
+  #       run: kubectl rollout status deployment/nexus-market -n nexus-market-production --timeout=300s
 
-      - name: Print production info
-        run: |
-          echo "::notice::Production deployed — image ${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.image-tag }}"
-          kubectl get pods -n nexus-market-production -l app.kubernetes.io/name=nexus-market
+  #     - name: Print production info
+  #       run: |
+  #         echo "::notice::Production deployed — image ${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.image-tag }}"
+  #         kubectl get pods -n nexus-market-production -l app.kubernetes.io/name=nexus-market
 
   # ────────────────────────────────────────────────────────────
   # JOB 4 — Notifications (always runs)
@@ -212,7 +212,7 @@ jobs:
   notify:
     name: Send Notifications
     runs-on: ubuntu-latest
-    needs: [build-and-scan, deploy-staging, deploy-production]
+    needs: [build-and-scan]
     if: always()
 
     steps:
