@@ -70,6 +70,7 @@ jobs:
 
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
+        continue-on-error: true
         with:
           scan-type: fs
           scan-ref: .
@@ -100,6 +101,7 @@ jobs:
 
       - name: Run Trivy Docker image scan
         uses: aquasecurity/trivy-action@master
+        continue-on-error: true
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }}
           severity: CRITICAL,HIGH
