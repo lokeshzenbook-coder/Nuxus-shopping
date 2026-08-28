@@ -41,7 +41,7 @@ jobs:
 
       # 5. Scan source code for secrets
       - name: Run Gitleaks secret scan
-        uses: gitleaks/gitleaks-action@v2.2.2
+        uses: gitleaks/gitleaks-action@v3
 
       # 6. Scan filesystem dependencies
       - name: Run Trivy filesystem scan
