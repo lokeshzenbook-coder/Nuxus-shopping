@@ -14,59 +14,90 @@ env:
   IMAGE_NAME: lokeshzenbook/node-app09
 
 jobs:
-  build-and-scan:
-    name: Build, Scan & Push
+
+  # ---------- Stage 1: Build & Test ----------
+  build:
+    name: "Stage 1: Build Application"
     runs-on: ubuntu-latest
-
     steps:
-
-      # 1. Checkout source code
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
 
-      # 3. Install dependencies
       - name: Install dependencies
         run: npm ci
 
-      # 4. Build application
       - name: Build application
         run: npm run build
 
-      # 5. Scan source code for secrets
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: .
+          retention-days: 1
+
+  # ---------- Stage 2: Security Scans (parallel) ----------
+  secret-scan:
+    name: "Stage 2a: Gitleaks Secret Scan"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Run Gitleaks secret scan
         uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. Scan filesystem dependencies
+  dependency-scan:
+    name: "Stage 2b: Trivy Filesystem Scan"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
-          severity: HIGH,CRITICAL
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
 
-      # 7. Set Docker image tag
+  # ---------- Stage 3: Docker Build & Image Scan ----------
+  docker-build-scan:
+    name: "Stage 3: Build & Scan Docker Image"
+    runs-on: ubuntu-latest
+    needs: [secret-scan, dependency-scan]
+    outputs:
+      image-tag: ${{ steps.meta.outputs.image-tag }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
       - name: Set image tag
         id: meta
-        run: |
-          echo "image-tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "image-tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      # 8. Build Docker image
       - name: Build Docker image
         run: |
           docker build \
             -t ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }} \
             -t ${{ env.IMAGE_NAME }}:latest .
 
-      # 9. Scan Docker image
       - name: Run Trivy Docker image scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -75,17 +106,38 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-      # 10. Login to Docker Hub
+      - name: Save Docker image as tarball
+        run: docker save ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }} -o image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # ---------- Stage 4: Push to Docker Hub ----------
+  push:
+    name: "Stage 4: Push to Docker Hub"
+    runs-on: ubuntu-latest
+    needs: docker-build-scan
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: docker load -i image.tar
+
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 11. Push Docker image to Docker Hub
       - name: Push Docker image
-        if: github.event_name != 'pull_request'
         run: |
-          docker push ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }}
+          docker push ${{ env.IMAGE_NAME }}:${{ needs.docker-build-scan.outputs.image-tag }}
           docker push ${{ env.IMAGE_NAME }}:latest
