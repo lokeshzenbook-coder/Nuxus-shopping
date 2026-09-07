@@ -5,29 +5,58 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
+# Install dependencies first for better layer caching
 COPY package*.json ./
+
 RUN npm ci
 
+# Copy application source
 COPY . .
+
+# Build production SPA
 RUN npm run build
 
-# ──────────────────────────────────────────────────────────
-# Stage 2 — Serve (nginx for static SPA)
-# ──────────────────────────────────────────────────────────
-FROM nginx:alpine
 
-# Remove default nginx site
-RUN rm -rf /usr/share/nginx/html/*
+# ──────────────────────────────────────────────────────────
+# Stage 2 — Production
+# ──────────────────────────────────────────────────────────
+FROM nginx:1.27-alpine
 
-# Copy built SPA assets
+# Remove default Nginx configuration and static files
+RUN rm -rf /usr/share/nginx/html/* \
+           /etc/nginx/conf.d/*
+
+# Copy production SPA assets
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Custom nginx config (SPA routing, gzip, security headers)
+# Copy hardened Nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
+# Create required directories and non-root user
+RUN addgroup -S nginxapp \
+    && adduser -S -D -H -G nginxapp nginxapp \
+    && mkdir -p /var/cache/nginx \
+               /var/run \
+               /var/log/nginx \
+    && chown -R nginxapp:nginxapp \
+               /usr/share/nginx/html \
+               /var/cache/nginx \
+               /var/run \
+               /var/log/nginx \
+               /etc/nginx
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -qO- http://localhost/healthz || exit 1
+# Nginx listens on an unprivileged port
+EXPOSE 8080
 
+# Container health check
+HEALTHCHECK --interval=30s \
+            --timeout=5s \
+            --start-period=10s \
+            --retries=3 \
+            CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+
+# Run Nginx as non-root
+USER nginxapp
+
+# Keep Nginx in foreground
 CMD ["nginx", "-g", "daemon off;"]
