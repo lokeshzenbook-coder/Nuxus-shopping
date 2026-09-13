@@ -85,7 +85,7 @@ jobs:
   docker-build-scan:
     name: "Stage 3: Build & Scan Docker Image"
     runs-on: ubuntu-latest
-    needs: [secret-scan, dependency-scan, eslint-scan]
+    needs: [secret-scan, dependency-scan]
     outputs:
       image-tag: ${{ steps.meta.outputs.image-tag }}
     steps:
