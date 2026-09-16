@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_NAME: lokeshzenbook/node-Nuxus
+  IMAGE_NAME: lokeshzenbook/node-nuxus
 
 jobs:
 
