@@ -78,11 +78,54 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+  semgrep-scan:
+    name: "Stage 2c: Semgrep SAST Scan"
+    runs-on: ubuntu-latest
+    needs: build
+    continue-on-error: true
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST scan
+        run: |
+          python3 -m pip install --user semgrep
+          export PATH="$PATH:$HOME/.local/bin"
+          semgrep --version
+          semgrep scan --config auto --sarif-output semgrep.sarif || true
+
+      - name: Upload Semgrep SARIF results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          retention-days: 7
+
+  codeql-scan:
+    name: "Stage 2d: GitHub CodeQL Analysis"
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
   # ---------- Stage 3: Docker Build & Image Scan ----------
   docker-build-scan:
     name: "Stage 3: Build & Scan Docker Image"
     runs-on: ubuntu-latest
-    needs: [secret-scan, dependency-scan]
+    needs: [secret-scan, dependency-scan, semgrep-scan, codeql-scan]
     outputs:
       image-tag: ${{ steps.meta.outputs.image-tag }}
     steps:
@@ -153,7 +196,7 @@ jobs:
   notify:
     name: "Stage 5: Slack Notification"
     runs-on: ubuntu-latest
-    needs: [build, secret-scan, dependency-scan, docker-build-scan, push]
+    needs: [build, secret-scan, dependency-scan, semgrep-scan, codeql-scan, docker-build-scan, push]
     if: always()
     steps:
       - name: Determine pipeline status
