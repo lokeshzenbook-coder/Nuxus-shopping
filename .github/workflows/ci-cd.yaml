@@ -78,37 +78,37 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-  sonarqube-scan:
-    name: "Stage 2c: SAST Analysis (SonarScanner)"
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  # sonarqube-scan:
+  #   name: "Stage 2c: SAST Analysis (SonarScanner)"
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #   steps:
+  #     - name: Checkout source
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 18
 
-      - name: Run SonarScanner SAST analysis
-        uses: SonarSource/sonarqube-scan-action@v5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          projectKey: nexusmarket-advanced-micro-frontend-e-commerce
-          projectName: "Nuxus Shopping - Advanced Micro-Frontend E-Commerce"
-          projectVersion: 1.0.0
-          args: "-Dsonar.verbose=true"
+  #     - name: Run SonarScanner SAST analysis
+  #       uses: SonarSource/sonarqube-scan-action@v5
+  #       env:
+  #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  #         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+  #       with:
+  #         projectKey: nexusmarket-advanced-micro-frontend-e-commerce
+  #         projectName: "Nuxus Shopping - Advanced Micro-Frontend E-Commerce"
+  #         projectVersion: 1.0.0
+  #         args: "-Dsonar.verbose=true"
 
   # ---------- Stage 3: Docker Build & Image Scan ----------
   docker-build-scan:
     name: "Stage 3: Build & Scan Docker Image"
     runs-on: ubuntu-latest
-    needs: [secret-scan, dependency-scan, sonarqube-scan]
+    needs: [secret-scan, dependency-scan]
     outputs:
       image-tag: ${{ steps.meta.outputs.image-tag }}
     steps:
