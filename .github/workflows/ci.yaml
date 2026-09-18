@@ -150,11 +150,36 @@ jobs:
           path: eslint-report.json
           retention-days: 7
 
+  hadolint-scan:
+    name: "Stage 2f: Hadolint Dockerfile Lint"
+    runs-on: ubuntu-latest
+    needs: build
+    continue-on-error: true
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint-report.sarif
+          no-fail: true
+
+      - name: Upload Hadolint report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hadolint-report
+          path: hadolint-report.sarif
+          retention-days: 7
+
   # ---------- Stage 3: Docker Build & Image Scan ----------
   docker-build-scan:
     name: "Stage 3: Build & Scan Docker Image"
     runs-on: ubuntu-latest
-    needs: [secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan]
+    needs: [secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, hadolint-scan]
     outputs:
       image-tag: ${{ steps.meta.outputs.image-tag }}
     steps:
@@ -225,7 +250,7 @@ jobs:
   notify:
     name: "Stage 5: Slack & Email Notification"
     runs-on: ubuntu-latest
-    needs: [build, secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, docker-build-scan, push]
+    needs: [build, secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, hadolint-scan, docker-build-scan, push]
     if: always()
     steps:
       - name: Determine pipeline status
@@ -277,7 +302,7 @@ jobs:
                       "type": "section",
                       "text": {
                         "type": "mrkdwn",
-                        "text": "*Artifacts:* semgrep.sarif, eslint-report.json, app-build, docker-image\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts|Download artifacts>"
+                        "text": "*Artifacts:* semgrep.sarif, eslint-report.json, hadolint-report.sarif, app-build, docker-image\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts|Download artifacts>"
                       }
                     }
                   ]
@@ -298,7 +323,7 @@ jobs:
           subject: "${{ steps.status.outputs.status }} - ${{ github.workflow }} (${{ github.repository }})"
           to: ${{ secrets.MAIL_TO }}
           from: "GitHub Actions <${{ secrets.EMAIL_USERNAME }}>"
-          attach: artifacts/semgrep-sarif/semgrep.sarif,artifacts/eslint-report/eslint-report.json,artifacts/notification/pipeline-report.txt
+          attach: artifacts/semgrep-sarif/semgrep.sarif,artifacts/eslint-report/eslint-report.json,artifacts/hadolint-report/hadolint-report.sarif,artifacts/notification/pipeline-report.txt
           html_body: |
             <h3>${{ steps.status.outputs.status }}: ${{ github.workflow }}</h3>
             <p><b>Repository:</b> ${{ github.repository }}</p>
@@ -306,5 +331,5 @@ jobs:
             <p><b>Triggered by:</b> ${{ github.actor }} (${{ github.event_name }})</p>
             <p><b>Commit:</b> <a href="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}">${{ github.sha }}</a></p>
             <p><b>Run logs:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View run</a></p>
-            <p><b>Artifacts</b> (semgrep.sarif, eslint-report.json attached; app-build &amp; docker-image are too large for email — download via link below):<br/>
+            <p><b>Artifacts</b> (semgrep.sarif, eslint-report.json, hadolint-report.sarif attached; app-build &amp; docker-image are too large for email — download via link below):<br/>
             <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts">Download all artifacts</a></p>
