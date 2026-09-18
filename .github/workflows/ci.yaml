@@ -175,6 +175,143 @@ jobs:
           path: hadolint-report.sarif
           retention-days: 7
 
+  # ---------- Stage 2g: Convert scan reports to PDF ----------
+  generate-pdf-reports:
+    name: "Stage 2g: Convert Reports to PDF"
+    runs-on: ubuntu-latest
+    needs: [semgrep-scan, eslint-scan, hadolint-scan]
+    if: always()
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PDF generation library
+        run: pip install --quiet fpdf2
+
+      - name: Download Semgrep SARIF
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: semgrep-sarif
+          path: semgrep-sarif
+
+      - name: Download ESLint report
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: eslint-report
+          path: eslint-report
+
+      - name: Download Hadolint report
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: hadolint-report
+          path: hadolint-report
+
+      - name: Convert reports to PDF
+        run: |
+          cat > convert_reports.py << 'PYEOF'
+          import json, os
+          from fpdf import FPDF
+
+          def sarif_to_pdf(sarif_path, pdf_path, title):
+              pdf = FPDF()
+              pdf.set_auto_page_break(auto=True, margin=15)
+              pdf.add_page()
+              pdf.set_font("Helvetica", "B", 16)
+              pdf.cell(0, 10, title, ln=True)
+              pdf.set_font("Helvetica", "", 10)
+              pdf.ln(4)
+
+              if not os.path.exists(sarif_path):
+                  pdf.multi_cell(0, 8, "No report file found for this scan.")
+                  pdf.output(pdf_path)
+                  return
+
+              with open(sarif_path) as f:
+                  data = json.load(f)
+
+              count = 0
+              for run in data.get("runs", []):
+                  for result in run.get("results", []):
+                      count += 1
+                      rule = result.get("ruleId", "unknown-rule")
+                      msg = result.get("message", {}).get("text", "")
+                      level = result.get("level", "warning")
+                      locations = result.get("locations", [])
+                      loc_str = ""
+                      if locations:
+                          phys = locations[0].get("physicalLocation", {})
+                          uri = phys.get("artifactLocation", {}).get("uri", "")
+                          line = phys.get("region", {}).get("startLine", "")
+                          loc_str = f"{uri}:{line}"
+                      pdf.set_font("Helvetica", "B", 10)
+                      pdf.multi_cell(0, 6, f"{count}. [{level.upper()}] {rule}")
+                      pdf.set_font("Helvetica", "", 10)
+                      pdf.multi_cell(0, 6, f"   Location: {loc_str}")
+                      pdf.multi_cell(0, 6, f"   {msg}")
+                      pdf.ln(2)
+
+              if count == 0:
+                  pdf.multi_cell(0, 8, "No findings reported.")
+
+              pdf.output(pdf_path)
+
+          def eslint_json_to_pdf(json_path, pdf_path, title):
+              pdf = FPDF()
+              pdf.set_auto_page_break(auto=True, margin=15)
+              pdf.add_page()
+              pdf.set_font("Helvetica", "B", 16)
+              pdf.cell(0, 10, title, ln=True)
+              pdf.set_font("Helvetica", "", 10)
+              pdf.ln(4)
+
+              if not os.path.exists(json_path):
+                  pdf.multi_cell(0, 8, "No report file found for this scan.")
+                  pdf.output(pdf_path)
+                  return
+
+              with open(json_path) as f:
+                  data = json.load(f)
+
+              count = 0
+              for file_result in data:
+                  file_path = file_result.get("filePath", "")
+                  for msg in file_result.get("messages", []):
+                      count += 1
+                      severity = "ERROR" if msg.get("severity") == 2 else "WARNING"
+                      rule = msg.get("ruleId", "unknown-rule")
+                      line = msg.get("line", "")
+                      text = msg.get("message", "")
+                      pdf.set_font("Helvetica", "B", 10)
+                      pdf.multi_cell(0, 6, f"{count}. [{severity}] {rule}")
+                      pdf.set_font("Helvetica", "", 10)
+                      pdf.multi_cell(0, 6, f"   {file_path}:{line}")
+                      pdf.multi_cell(0, 6, f"   {text}")
+                      pdf.ln(2)
+
+              if count == 0:
+                  pdf.multi_cell(0, 8, "No findings reported.")
+
+              pdf.output(pdf_path)
+
+          os.makedirs("pdf-reports", exist_ok=True)
+          sarif_to_pdf("semgrep-sarif/semgrep.sarif", "pdf-reports/semgrep-report.pdf", "Semgrep SAST Findings")
+          sarif_to_pdf("hadolint-report/hadolint-report.sarif", "pdf-reports/hadolint-report.pdf", "Hadolint Dockerfile Findings")
+          eslint_json_to_pdf("eslint-report/eslint-report.json", "pdf-reports/eslint-report.pdf", "ESLint Findings")
+          PYEOF
+          python3 convert_reports.py
+
+      - name: Upload PDF reports artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-reports
+          path: pdf-reports/
+          retention-days: 7
+
   # ---------- Stage 3: Docker Build & Image Scan ----------
   docker-build-scan:
     name: "Stage 3: Build & Scan Docker Image"
@@ -246,11 +383,11 @@ jobs:
           docker push ${{ env.IMAGE_NAME }}:${{ needs.docker-build-scan.outputs.image-tag }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-  # ---------- Stage 5: Slack & Email Notification ----------
+  # ---------- Stage 5: Slack & Email Notification (PDF attachments) ----------
   notify:
     name: "Stage 5: Slack & Email Notification"
     runs-on: ubuntu-latest
-    needs: [build, secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, hadolint-scan, docker-build-scan, push]
+    needs: [build, secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, hadolint-scan, generate-pdf-reports, docker-build-scan, push]
     if: always()
     steps:
       - name: Determine pipeline status
@@ -264,16 +401,16 @@ jobs:
             echo "color=#2eb886" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download all pipeline artifacts
+      - name: Download PDF reports
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: false
+          name: pdf-reports
+          path: pdf-reports
 
       - name: Generate pipeline report
         run: |
-          mkdir -p artifacts/notification
-          cat > artifacts/notification/pipeline-report.txt <<EOF
+          mkdir -p notification
+          cat > notification/pipeline-report.txt <<EOF
           Pipeline : ${{ github.workflow }}
           Status   : ${{ steps.status.outputs.status }}
           Repo     : ${{ github.repository }} (${{ github.ref_name }})
@@ -282,7 +419,7 @@ jobs:
           Artifacts: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts
           EOF
 
-      - name: Send Slack notification with artifacts
+      - name: Send Slack summary message
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: |
@@ -302,7 +439,7 @@ jobs:
                       "type": "section",
                       "text": {
                         "type": "mrkdwn",
-                        "text": "*Artifacts:* semgrep.sarif, eslint-report.json, hadolint-report.sarif, app-build, docker-image\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts|Download artifacts>"
+                        "text": "*PDF scan reports are attached below (Semgrep, ESLint, Hadolint).*"
                       }
                     }
                   ]
@@ -313,7 +450,17 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
-      - name: Send email notification with artifacts
+      # Requires a Slack app with files:write scope (bot token), since
+      # incoming webhooks cannot carry file attachments.
+      - name: Upload PDF reports to Slack
+        uses: MeilCli/slack-upload-file@v4
+        with:
+          slack_token: ${{ secrets.SLACK_BOT_TOKEN }}
+          channels: ${{ secrets.SLACK_CHANNEL_ID }}
+          file_pattern: "pdf-reports/*.pdf"
+          initial_comment: "Scan reports (PDF) for ${{ github.repository }}@${{ github.ref_name }} — ${{ steps.status.outputs.status }}"
+
+      - name: Send email notification with PDF attachments
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -323,7 +470,7 @@ jobs:
           subject: "${{ steps.status.outputs.status }} - ${{ github.workflow }} (${{ github.repository }})"
           to: ${{ secrets.MAIL_TO }}
           from: "GitHub Actions <${{ secrets.EMAIL_USERNAME }}>"
-          attach: artifacts/semgrep-sarif/semgrep.sarif,artifacts/eslint-report/eslint-report.json,artifacts/hadolint-report/hadolint-report.sarif,artifacts/notification/pipeline-report.txt
+          attach: pdf-reports/semgrep-report.pdf,pdf-reports/eslint-report.pdf,pdf-reports/hadolint-report.pdf,notification/pipeline-report.txt
           html_body: |
             <h3>${{ steps.status.outputs.status }}: ${{ github.workflow }}</h3>
             <p><b>Repository:</b> ${{ github.repository }}</p>
@@ -331,5 +478,4 @@ jobs:
             <p><b>Triggered by:</b> ${{ github.actor }} (${{ github.event_name }})</p>
             <p><b>Commit:</b> <a href="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}">${{ github.sha }}</a></p>
             <p><b>Run logs:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View run</a></p>
-            <p><b>Artifacts</b> (semgrep.sarif, eslint-report.json, hadolint-report.sarif attached; app-build &amp; docker-image are too large for email — download via link below):<br/>
-            <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts">Download all artifacts</a></p>
+            <p><b>Attached:</b> Semgrep, ESLint and Hadolint findings as PDF reports.</p>
