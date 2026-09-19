@@ -1,4 +1,4 @@
-name: Build, Scan, Push Docker Image
+name: Build, Scan & Push Docker Image
 
 on:
   push:
@@ -19,7 +19,6 @@ jobs:
   build:
     name: "Stage 1: Build Application"
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -44,14 +43,12 @@ jobs:
           name: app-build
           path: .
           retention-days: 1
-          if-no-files-found: warn
 
-  # ---------- Stage 2: Security Scans ----------
+  # ---------- Stage 2: Security Scans (parallel) ----------
   secret-scan:
     name: "Stage 2a: Gitleaks Secret Scan"
     runs-on: ubuntu-latest
     needs: build
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -60,7 +57,6 @@ jobs:
 
       - name: Run Gitleaks secret scan
         uses: gitleaks/gitleaks-action@v3
-        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,7 +64,6 @@ jobs:
     name: "Stage 2b: Trivy Filesystem Scan"
     runs-on: ubuntu-latest
     needs: build
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -82,56 +77,37 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
-          format: sarif
-          output: trivy-fs.sarif
-
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-fs-sarif
-          path: trivy-fs.sarif
-          retention-days: 7
-          if-no-files-found: warn
 
   semgrep-scan:
     name: "Stage 2c: Semgrep SAST Scan"
     runs-on: ubuntu-latest
     needs: build
     continue-on-error: true
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install Semgrep
-        run: python3 -m pip install --user semgrep
-
       - name: Run Semgrep SAST scan
         run: |
+          python3 -m pip install --user semgrep
           export PATH="$PATH:$HOME/.local/bin"
           semgrep --version
-          semgrep scan \
-            --config auto \
-            --sarif-output semgrep.sarif || true
+          semgrep scan --config auto --sarif-output semgrep.sarif || true
 
-      - name: Upload Semgrep SARIF
-        if: always()
+      - name: Upload Semgrep SARIF results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: semgrep-sarif
           path: semgrep.sarif
           retention-days: 7
-          if-no-files-found: warn
 
   codeql-scan:
     name: "Stage 2d: GitHub CodeQL Analysis"
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      contents: read
       security-events: write
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -150,7 +126,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     continue-on-error: true
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -159,33 +134,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install ESLint tooling
+        run: npm install --no-save eslint @eslint/js globals typescript-eslint
 
       - name: Run ESLint scan
         run: |
-          npx eslint . \
-            --format json \
-            --output-file eslint-report.json \
-            --no-error-on-unmatched-pattern || true
+          npx eslint . --format json --output-file eslint-report.json --no-error-on-unmatched-pattern || true
 
-      - name: Upload ESLint report
-        if: always()
+      - name: Upload ESLint report artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: eslint-report
           path: eslint-report.json
           retention-days: 7
-          if-no-files-found: warn
 
   hadolint-scan:
     name: "Stage 2f: Hadolint Dockerfile Lint"
     runs-on: ubuntu-latest
     needs: build
     continue-on-error: true
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -198,30 +167,149 @@ jobs:
           output-file: hadolint-report.sarif
           no-fail: true
 
-      - name: Upload Hadolint SARIF
-        if: always()
+      - name: Upload Hadolint report artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: hadolint-report
           path: hadolint-report.sarif
           retention-days: 7
-          if-no-files-found: warn
 
-  # ---------- Stage 3: Docker Build & Image Scan ----------
-  docker-build-scan:
-    name: "Stage 3: Build & Scan Docker Image"
+  # ---------- Stage 2g: Convert SARIF reports to PDF ----------
+  sarif-to-pdf:
+    name: "Stage 2g: Convert SARIF Reports to PDF"
     runs-on: ubuntu-latest
-    needs:
-      - secret-scan
-      - dependency-scan
-      - semgrep-scan
-      - codeql-scan
-      - eslint-scan
-      - hadolint-scan
+    needs: [semgrep-scan, hadolint-scan]
+    if: always()
+    steps:
+      - name: Download Semgrep SARIF
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: semgrep-sarif
+          path: sarif-input
 
+      - name: Download Hadolint SARIF
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: hadolint-report
+          path: sarif-input
+
+      - name: Install PDF conversion dependencies
+        run: python3 -m pip install --user reportlab
+
+      # FIX: the previous approach of piping raw SARIF (JSON) straight into a
+      # PDF/mail attachment failed because SARIF is structured JSON, not
+      # printable text. This renders each SARIF file into a proper,
+      # human-readable PDF report before anything gets attached/emailed.
+      - name: Convert SARIF files to PDF
+        run: |
+          export PATH="$PATH:$HOME/.local/bin"
+          mkdir -p sarif-pdf
+          cat > sarif_to_pdf.py <<'PYEOF'
+          import json
+          import os
+          import sys
+          from reportlab.lib.pagesizes import A4
+          from reportlab.lib.units import mm
+          from reportlab.lib.styles import getSampleStyleSheet
+          from reportlab.platypus import (
+              SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+          )
+          from reportlab.lib import colors
+
+          def load_sarif(path):
+              with open(path, "r", encoding="utf-8") as f:
+                  return json.load(f)
+
+          def extract_rows(sarif):
+              rows = [["Rule ID", "Severity", "Message", "Location"]]
+              tool_name = "unknown"
+              for run in sarif.get("runs", []):
+                  tool_name = run.get("tool", {}).get("driver", {}).get("name", "unknown")
+                  for result in run.get("results", []):
+                      rule_id = result.get("ruleId", "N/A")
+                      level = result.get("level", "note")
+                      message = result.get("message", {}).get("text", "")
+                      locations = result.get("locations", [])
+                      loc_str = "N/A"
+                      if locations:
+                          phys = locations[0].get("physicalLocation", {})
+                          uri = phys.get("artifactLocation", {}).get("uri", "N/A")
+                          line = phys.get("region", {}).get("startLine", "")
+                          loc_str = f"{uri}:{line}" if line else uri
+                      rows.append([rule_id, level, message[:200], loc_str])
+              return rows, tool_name
+
+          def build_pdf(sarif_path, pdf_path):
+              sarif = load_sarif(sarif_path)
+              rows, tool_name = extract_rows(sarif)
+              styles = getSampleStyleSheet()
+              doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                                       leftMargin=15 * mm, rightMargin=15 * mm,
+                                       topMargin=15 * mm, bottomMargin=15 * mm)
+              elements = [
+                  Paragraph(f"Security Scan Report: {tool_name}", styles["Title"]),
+                  Spacer(1, 8),
+                  Paragraph(f"Source file: {os.path.basename(sarif_path)}", styles["Normal"]),
+                  Paragraph(f"Total findings: {len(rows) - 1}", styles["Normal"]),
+                  Spacer(1, 12),
+              ]
+              if len(rows) > 1:
+                  wrapped = [rows[0]] + [
+                      [Paragraph(str(c), styles["BodyText"]) for c in r] for r in rows[1:]
+                  ]
+                  table = Table(wrapped, colWidths=[70, 55, 260, 100])
+                  table.setStyle(TableStyle([
+                      ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2eb886")),
+                      ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                      ("FONTSIZE", (0, 0), (-1, -1), 8),
+                      ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                      ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                      ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f4f4")]),
+                  ]))
+                  elements.append(table)
+              else:
+                  elements.append(Paragraph("No findings reported.", styles["Normal"]))
+              doc.build(elements)
+
+          if __name__ == "__main__":
+              input_dir = sys.argv[1]
+              output_dir = sys.argv[2]
+              os.makedirs(output_dir, exist_ok=True)
+              found = False
+              for fname in os.listdir(input_dir):
+                  if fname.endswith(".sarif"):
+                      found = True
+                      src = os.path.join(input_dir, fname)
+                      out = os.path.join(output_dir, fname.replace(".sarif", ".pdf"))
+                      try:
+                          build_pdf(src, out)
+                          print(f"Converted {src} -> {out}")
+                      except Exception as exc:
+                          print(f"WARNING: failed to convert {src}: {exc}")
+              if not found:
+                  print("No .sarif files found to convert.")
+          PYEOF
+          python3 sarif_to_pdf.py sarif-input sarif-pdf
+
+      - name: Upload SARIF PDF reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sarif-pdf-reports
+          path: sarif-pdf/*.pdf
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------- Stage 3: Docker Build, SBOM & Image Scan ----------
+  docker-build-scan:
+    name: "Stage 3: Build, SBOM & Scan Docker Image"
+    runs-on: ubuntu-latest
+    needs: [secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, hadolint-scan]
     outputs:
       image-tag: ${{ steps.meta.outputs.image-tag }}
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -236,6 +324,29 @@ jobs:
             -t ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }} \
             -t ${{ env.IMAGE_NAME }}:latest .
 
+      - name: Generate SBOM (SPDX format via Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }}
+          format: spdx-json
+          output-file: sbom-${{ steps.meta.outputs.image-tag }}.spdx.json
+
+      - name: Generate SBOM (CycloneDX format via Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.image-tag }}
+          format: cyclonedx-json
+          output-file: sbom-${{ steps.meta.outputs.image-tag }}.cdx.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-reports
+          path: |
+            sbom-${{ steps.meta.outputs.image-tag }}.spdx.json
+            sbom-${{ steps.meta.outputs.image-tag }}.cdx.json
+          retention-days: 30
+
       - name: Run Trivy Docker image scan
         uses: aquasecurity/trivy-action@master
         continue-on-error: true
@@ -244,18 +355,8 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
-          format: sarif
-          output: trivy-image.sarif
 
-      - name: Upload Trivy image SARIF
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-image-sarif
-          path: trivy-image.sarif
-          retention-days: 7
-          if-no-files-found: warn
-
+      # Both tags are saved into the tarball, not just the SHA tag
       - name: Save Docker image as tarball
         run: |
           docker save \
@@ -276,7 +377,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: docker-build-scan
     if: github.event_name != 'pull_request'
-
     steps:
       - name: Download image artifact
         uses: actions/download-artifact@v4
@@ -297,33 +397,22 @@ jobs:
           docker push ${{ env.IMAGE_NAME }}:${{ needs.docker-build-scan.outputs.image-tag }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-  # ---------- Stage 5: Security Report + Notifications ----------
+  # ---------- Stage 5: Slack & Email Notification ----------
   notify:
-    name: "Stage 5: Security Report & Notification"
+    name: "Stage 5: Slack & Email Notification"
     runs-on: ubuntu-latest
-    needs:
-      - build
-      - secret-scan
-      - dependency-scan
-      - semgrep-scan
-      - codeql-scan
-      - eslint-scan
-      - hadolint-scan
-      - docker-build-scan
-      - push
+    needs: [build, secret-scan, dependency-scan, semgrep-scan, codeql-scan, eslint-scan, hadolint-scan, sarif-to-pdf, docker-build-scan, push]
     if: always()
-
     steps:
       - name: Determine pipeline status
         id: status
-        shell: bash
         run: |
           if echo "${{ join(needs.*.result, ',') }}" | grep -q "failure"; then
-            echo "status=FAILED" >> "$GITHUB_OUTPUT"
-            echo "status_icon=❌" >> "$GITHUB_OUTPUT"
+            echo "status=❌ Failed" >> "$GITHUB_OUTPUT"
+            echo "color=#dc3545" >> "$GITHUB_OUTPUT"
           else
-            echo "status=SUCCESS" >> "$GITHUB_OUTPUT"
-            echo "status_icon=✅" >> "$GITHUB_OUTPUT"
+            echo "status=✅ Success" >> "$GITHUB_OUTPUT"
+            echo "color=#2eb886" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Download all pipeline artifacts
@@ -332,249 +421,88 @@ jobs:
           path: artifacts
           merge-multiple: false
 
-      # Generate a PDF from every SARIF file.
-      # The Python code uses fpdf2's CHAR wrapping so long URLs,
-      # hashes, paths and other unbroken strings cannot trigger:
-      # "Not enough horizontal space to render a single character".
-      - name: Generate SARIF security PDF
-        if: always()
-        shell: bash
-        run: |
-          python3 -m pip install --upgrade fpdf2
-
-          mkdir -p artifacts/security-report
-
-          cat > sarif_to_pdf.py <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          from fpdf import FPDF
-
-          SARIF_FILES = list(Path("artifacts").rglob("*.sarif"))
-          OUTPUT = "artifacts/security-report/security-report.pdf"
-
-          class SecurityReport(FPDF):
-              def __init__(self):
-                  super().__init__(orientation="L", unit="mm", format="A4")
-                  self.set_auto_page_break(auto=True, margin=12)
-
-                  font_candidates = [
-                      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                  ]
-
-                  regular = font_candidates[0]
-                  bold = font_candidates[1]
-
-                  if Path(regular).exists() and Path(bold).exists():
-                      self.add_font("DejaVu", "", regular)
-                      self.add_font("DejaVu", "B", bold)
-                      self.font_name = "DejaVu"
-                  else:
-                      self.font_name = "Helvetica"
-
-              def safe(self, value):
-                  if value is None:
-                      return ""
-                  return str(value).replace("\x00", " ")
-
-              def wrapped(self, text, width=0, height=5):
-                  # CHAR is critical for long unbroken strings such as:
-                  # URLs, SHA values, registry paths and package names.
-                  self.multi_cell(
-                      width,
-                      height,
-                      self.safe(text),
-                      wrapmode="CHAR",
-                  )
-
-          pdf = SecurityReport()
-
-          # Avoid failing on an empty SARIF collection.
-          total = 0
-          findings = []
-
-          for sarif_file in SARIF_FILES:
-              try:
-                  with open(sarif_file, "r", encoding="utf-8") as fh:
-                      data = json.load(fh)
-              except Exception as exc:
-                  findings.append({
-                      "tool": "SARIF parser",
-                      "rule": "PARSE_ERROR",
-                      "level": "error",
-                      "file": str(sarif_file),
-                      "line": "",
-                      "message": f"Could not parse SARIF: {exc}",
-                  })
-                  continue
-
-              for run in data.get("runs", []):
-                  tool = (
-                      run.get("tool", {})
-                      .get("driver", {})
-                      .get("name", "Unknown")
-                  )
-
-                  for result in run.get("results", []):
-                      physical = (
-                          result.get("locations", [{}])[0]
-                          .get("physicalLocation", {})
-                      )
-
-                      location = physical.get("artifactLocation", {})
-                      region = physical.get("region", {})
-
-                      findings.append({
-                          "tool": tool,
-                          "rule": result.get("ruleId", "N/A"),
-                          "level": result.get("level", "N/A"),
-                          "file": location.get("uri", ""),
-                          "line": region.get("startLine", ""),
-                          "message": (
-                              result.get("message", {})
-                              .get("text", "")
-                          ),
-                      })
-                      total += 1
-
-          pdf.add_page()
-          pdf.set_font(pdf.font_name, "B", 18)
-          pdf.wrapped("DevSecOps Security Scan Report", height=8)
-
-          pdf.set_font(pdf.font_name, "", 10)
-          pdf.wrapped(
-              f"Repository: {os.environ.get('GITHUB_REPOSITORY', '')}",
-              height=5,
-          )
-          pdf.wrapped(
-              f"Commit: {os.environ.get('GITHUB_SHA', '')}",
-              height=5,
-          )
-          pdf.wrapped(f"Total findings: {total}", height=5)
-          pdf.ln(4)
-
-          if not findings:
-              pdf.set_font(pdf.font_name, "B", 12)
-              pdf.wrapped("No SARIF findings were available.", height=6)
-          else:
-              for index, finding in enumerate(findings, start=1):
-                  pdf.set_font(pdf.font_name, "B", 11)
-                  pdf.wrapped(
-                      f"{index}. {finding['tool']} - {finding['rule']}",
-                      height=6,
-                  )
-
-                  pdf.set_font(pdf.font_name, "", 9)
-                  pdf.wrapped(
-                      f"Severity: {finding['level']}",
-                      height=5,
-                  )
-                  pdf.wrapped(
-                      f"Location: {finding['file']}:{finding['line']}",
-                      height=5,
-                  )
-                  pdf.wrapped(
-                      f"Finding: {finding['message']}",
-                      height=5,
-                  )
-                  pdf.ln(3)
-
-          pdf.output(OUTPUT)
-          print(f"Created {OUTPUT}")
-
-          PY
-
-          python3 sarif_to_pdf.py
-
-      - name: Upload security PDF
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-report-pdf
-          path: artifacts/security-report/security-report.pdf
-          retention-days: 7
-          if-no-files-found: warn
-
       - name: Generate pipeline report
-        if: always()
-        shell: bash
         run: |
           mkdir -p artifacts/notification
-
           cat > artifacts/notification/pipeline-report.txt <<EOF
           Pipeline : ${{ github.workflow }}
           Status   : ${{ steps.status.outputs.status }}
           Repo     : ${{ github.repository }} (${{ github.ref_name }})
           Trigger  : ${{ github.actor }} (${{ github.event_name }})
           Commit   : ${{ github.sha }}
-          Run      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           Artifacts: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts
           EOF
 
-      - name: Send Slack notification
-        if: always()
+      - name: Build email attachment list
+        id: attachments
+        run: |
+          # Only attach files that actually exist for this run — the SARIF-PDF
+          # and SBOM jobs can be skipped/empty on some triggers, and globbing
+          # a missing path breaks the mail action, which was the root cause
+          # of the earlier SARIF-to-PDF/email failure.
+          files=""
+          for pattern in \
+            "artifacts/eslint-report/eslint-report.json" \
+            "artifacts/notification/pipeline-report.txt" \
+            "artifacts/sbom-reports/*.json" \
+            "artifacts/sarif-pdf-reports/*.pdf" ; do
+            for match in $pattern; do
+              if [ -f "$match" ]; then
+                files="$files,$match"
+              fi
+            done
+          done
+          files="${files#,}"
+          echo "list=$files" >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack notification with artifacts
         uses: slackapi/slack-github-action@v1.27.0
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
         with:
           payload: |
             {
               "attachments": [
                 {
+                  "color": "${{ steps.status.outputs.color }}",
                   "blocks": [
                     {
                       "type": "section",
                       "text": {
                         "type": "mrkdwn",
-                        "text": "${{ steps.status.outputs.status_icon }} *${{ steps.status.outputs.status }}*: `${{ github.workflow }}`\n*Repo:* `${{ github.repository }}`\n*Branch:* `${{ github.ref_name }}`\n*Commit:* `${{ github.sha }}`\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>"
+                        "text": "*${{ steps.status.outputs.status }}*: `${{ github.workflow }}`\n*Repo:* ${{ github.repository }}\n*Branch:* ${{ github.ref_name }}\n*Triggered by:* ${{ github.actor }} (${{ github.event_name }})\n*Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>"
                       }
                     },
                     {
                       "type": "section",
                       "text": {
                         "type": "mrkdwn",
-                        "text": "*Security artifacts:* SARIF reports + consolidated PDF\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts|Download artifacts>"
+                        "text": "*Artifacts:* SARIF PDF reports, eslint-report.json, sbom-reports (SPDX + CycloneDX), app-build, docker-image\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts|Download artifacts>"
                       }
                     }
                   ]
                 }
               ]
             }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
-      - name: Send email notification
-        if: always()
+      - name: Send email notification with artifacts
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "${{ steps.status.outputs.status_icon }} ${{ steps.status.outputs.status }} - ${{ github.workflow }} (${{ github.repository }})"
+          subject: "${{ steps.status.outputs.status }} - ${{ github.workflow }} (${{ github.repository }})"
           to: ${{ secrets.MAIL_TO }}
           from: "GitHub Actions <${{ secrets.EMAIL_USERNAME }}>"
-          attach: >-
-            artifacts/semgrep-sarif/semgrep.sarif,
-            artifacts/eslint-report/eslint-report.json,
-            artifacts/hadolint-report/hadolint-report.sarif,
-            artifacts/trivy-fs-sarif/trivy-fs.sarif,
-            artifacts/trivy-image-sarif/trivy-image.sarif,
-            artifacts/security-report/security-report.pdf,
-            artifacts/notification/pipeline-report.txt
+          attach: ${{ steps.attachments.outputs.list }}
           html_body: |
-            <h3>${{ steps.status.outputs.status_icon }} ${{ steps.status.outputs.status }}: ${{ github.workflow }}</h3>
+            <h3>${{ steps.status.outputs.status }}: ${{ github.workflow }}</h3>
             <p><b>Repository:</b> ${{ github.repository }}</p>
             <p><b>Branch:</b> ${{ github.ref_name }}</p>
             <p><b>Triggered by:</b> ${{ github.actor }} (${{ github.event_name }})</p>
-            <p><b>Commit:</b>
-              <a href="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}">
-                ${{ github.sha }}
-              </a>
-            </p>
-            <p><b>Run logs:</b>
-              <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">
-                View run
-              </a>
-            </p>
-            <p>The email includes the SARIF scan results and the consolidated PDF security report.</p>
+            <p><b>Commit:</b> <a href="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}">${{ github.sha }}</a></p>
+            <p><b>Run logs:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View run</a></p>
+            <p><b>Artifacts</b> (SARIF findings attached as readable PDFs, plus ESLint JSON, SBOM SPDX/CycloneDX and pipeline report; app-build &amp; docker-image are too large for email — download via link below):<br/>
+            <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts">Download all artifacts</a></p>
